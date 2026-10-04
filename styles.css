@@ -157,3 +157,4 @@
 /* v10.8.2 staff lifecycle */
 .staff-inactive{opacity:.72}
 .staff-inactive td{background:var(--panel)}
+.portal-public-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end;margin-top:12px}.portal-public-note{grid-column:1/-1;margin:0;font-size:12px}@media(max-width:800px){.portal-public-grid{grid-template-columns:1fr}}

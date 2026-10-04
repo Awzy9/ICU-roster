@@ -16,6 +16,10 @@
       <p id="portalTitle">Verifying your personal request link…</p>
     </section>
     <div id="pageStatus" class="status"></div>
+    <section id="publicPicker" class="card" hidden>
+      <div class="field"><label>Who are you?</label><select id="publicStaff"><option value="">Select your name…</option></select></div>
+      <p class="muted">Choose only your own name. The coordinator reviews every request before anything changes.</p>
+    </section>
     <section id="requestApp" class="card" hidden>
       <div class="identity"><div><span class="muted">Requesting as</span><strong id="staffName">—</strong></div><span id="monthName" class="muted"></span></div>
       <div class="tabs">
@@ -44,7 +48,7 @@
         <button id="submitSwap" class="btn" type="button">Submit Swap Request</button>
       </section>
     </section>
-    <section class="card"><p class="muted">This is a personal request link. Do not forward it to another staff member. Pager/phone numbers and the full monthly roster are not exposed on this page.</p></section>
+    <section class="card"><p id="linkNote" class="muted">This is a personal request link. Do not forward it to another staff member. Pager/phone numbers and the full monthly roster are not exposed on this page.</p></section>
   </main>
 <script src="request.js"></script>
 </body>

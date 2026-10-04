@@ -32,6 +32,7 @@
       <button id="newMonthBtn" class="btn secondary" type="button">New Month Wizard</button>
       <button id="auditBtn" class="btn secondary" type="button">Audit Roster</button>
       <button id="printBtn" class="btn ghost" type="button">Print / Save PDF</button>
+      <button id="exportExcelBtn" class="btn ghost" type="button" title="Download the roster, coverage, units and workload as an Excel workbook">Export Excel</button>
       <button id="backupBtn" class="btn ghost" type="button">Download Backup</button>
       <button id="restoreBtn" class="btn ghost" type="button">Restore Backup</button>
       <input id="restoreInput" type="file" accept="application/json,.json" hidden />
@@ -195,7 +196,7 @@ Tip: tabs, commas, or multiple spaces are accepted."></textarea>
               <small class="muted">Examples: <b>Ali Alsuhaibani R2 [TAB] 1460</b> or simply <b>Ali Alsuhaibani</b>.</small>
             </div>
             <div class="bulk-defaults">
-              <div class="field"><label>Default Level</label><select id="bulkStaffLevel"><option>R1</option><option selected>R2</option><option>Fellow</option><option>Rotator</option></select></div>
+              <div class="field"><label>Default Level</label><select id="bulkStaffLevel"><option>R1</option><option selected>R2</option><option>R3</option><option>Fellow</option><option>Rotator</option></select></div>
               <div class="field"><label>Default Group</label><input id="bulkStaffGroup" type="text" value="ICU Residents" placeholder="ICU Residents / ER Rotators..." /></div>
               <div class="field"><label>Maximum Shift Credits / Month</label><input id="bulkStaffMax" type="number" min="1" max="31" value="18" /></div>
               <label class="check bulk-check"><input id="bulkAutoDetect" type="checkbox" checked /> Auto-detect R1 / R2 / Fellow / ER / IM / GS from each line</label>
@@ -213,7 +214,7 @@ Tip: tabs, commas, or multiple spaces are accepted."></textarea>
           <h3 id="staffFormTitle">Add Staff Member</h3>
           <div class="form-grid">
             <div class="field"><label>Name</label><input id="staffName" type="text" /></div>
-            <div class="field"><label>Level</label><select id="staffLevel"><option>R1</option><option>R2</option><option>Fellow</option><option>Rotator</option></select></div>
+            <div class="field"><label>Level</label><select id="staffLevel"><option>R1</option><option>R2</option><option>R3</option><option>Fellow</option><option>Rotator</option></select></div>
             <div class="field"><label>Group</label><input id="staffGroup" type="text" placeholder="Residents / ER / IM..." /></div>
             <div class="field"><label>Maximum Shift Credits / Month</label><input id="staffMax" type="number" min="1" max="31" value="16" /></div>
             <div class="field"><label>Pager / Phone</label><input id="staffPager" type="text" placeholder="1460 or 05xxxxxxxx" /></div>
@@ -242,8 +243,10 @@ Tip: tabs, commas, or multiple spaces are accepted."></textarea>
             <div class="field"><label>Code</label><input id="shiftCode" type="text" maxlength="8" /></div>
             <div class="field"><label>Name</label><input id="shiftName" type="text" /></div>
             <div class="field"><label>Type</label><select id="shiftType"><option value="day">Day unit</option><option value="night">Night shift</option></select></div>
-            <div class="field"><label>Required on Weekdays</label><input id="shiftWeekday" type="number" min="0" max="10" value="1" /></div>
-            <div class="field"><label>Required on Weekends</label><input id="shiftWeekend" type="number" min="0" max="10" value="1" /></div>
+            <div class="field"><label>Minimum (required) on Weekdays</label><input id="shiftWeekday" type="number" min="0" max="10" value="1" /></div>
+            <div class="field"><label>Maximum on Weekdays (optional)</label><input id="shiftWeekdayMax" type="number" min="0" max="10" placeholder="same as minimum" /></div>
+            <div class="field"><label>Minimum (required) on Weekends</label><input id="shiftWeekend" type="number" min="0" max="10" value="1" /></div>
+            <div class="field"><label>Maximum on Weekends (optional)</label><input id="shiftWeekendMax" type="number" min="0" max="10" placeholder="same as minimum" /></div>
             <label class="field checkbox-field"><span>Use unit-continuity blocks</span><input id="shiftContinuity" type="checkbox" checked /></label>
           </div>
           <div class="inline-actions"><button id="saveShiftBtn" class="btn primary" type="button">Save</button><button id="cancelShiftBtn" class="btn ghost" type="button">Cancel</button></div>
@@ -267,6 +270,11 @@ Tip: tabs, commas, or multiple spaces are accepted."></textarea>
           <div class="portal-personal-grid">
             <div class="field"><label>Staff Member</label><select id="portalStaffSelect"></select></div>
             <div class="field portal-link-field"><label>Personal Request Link</label><div class="portal-link-row"><input id="staffRequestLink" type="text" readonly placeholder="Create/sync the portal first" /><button id="copyRequestLinkBtn" class="btn ghost" type="button">Copy Personal Link</button></div></div>
+          </div>
+          <div class="portal-public-grid">
+            <div class="field portal-link-field"><label>Public Link — Requests &amp; Leave (staff pick their own name)</label><div class="portal-link-row"><input id="publicRequestLink" type="text" readonly placeholder="Create/sync the portal first" /><button id="copyPublicRequestLinkBtn" class="btn ghost" type="button">Copy Public Link</button></div></div>
+            <div class="field portal-link-field"><label>Public Link — Shift Swaps (staff pick their own name)</label><div class="portal-link-row"><input id="publicSwapLink" type="text" readonly placeholder="Create/sync the portal first" /><button id="copyPublicSwapLinkBtn" class="btn ghost" type="button">Copy Public Swap Link</button></div></div>
+            <p class="muted portal-public-note"><b>Convenience vs. security:</b> a public link works for the whole team, but it also lets anyone who has it submit a request as <i>any</i> staff member. Every request is still only a pending request until you approve it. Share it only in your private staff group, and use <b>Regenerate Personal Links</b> to cancel all links (public and personal) if one leaks.</p>
           </div>
           <div id="portalStatus" class="muted portal-status">Not synced yet.</div>
           <div class="table-wrap spaced"><table class="data-table" id="remoteRequestsTable"></table></div>
@@ -385,6 +393,7 @@ Tip: tabs, commas, or multiple spaces are accepted."></textarea>
           <label class="rule card"><span>Minimum Calendar-Day Spacing Between On-Calls</span><input id="ruleMinNightGapDays" type="number" min="3" max="14" /></label>
           <label class="rule card"><span>Protect Full Post-Call Day (no assignment after on-call)</span><input id="ruleNightRest" type="checkbox" /></label>
           <label class="rule card"><span>Acceptable Shift-Credit Difference</span><input id="ruleFairGap" type="number" min="0" max="10" /></label>
+          <label class="rule card"><span>Continue Last Unit From Previous Month (until the minimum block is reached)</span><input id="ruleContinuePrevMonth" type="checkbox" /></label>
           <label class="rule card"><span>Saudi Weekend (Friday / Saturday)</span><input id="ruleSaudiWeekend" type="checkbox" /></label>
           <div class="rule card fixed-rule"><span>All-Staff Weekend Maximum</span><strong id="weekendCapSummary">Calculated from the selected month</strong></div>
           <div class="rule card fixed-rule"><span>Weekend Duty Package</span><strong id="weekendPackageSummary">1 weekend on-call OR both weekend day shifts</strong></div>
@@ -404,6 +413,7 @@ Tip: tabs, commas, or multiple spaces are accepted."></textarea>
 
     <footer class="footer">Roster planner with local browser storage plus a Supabase-backed personal staff-request portal. Staff do not need accounts; each request link is individually token-protected. Use Download Backup regularly (it excludes staff-request tokens but still contains confidential roster data) and Print / Save PDF for an official copy.</footer>
   </div>
-  <script src="app.js"></script>
+  <script src="xlsx-export.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

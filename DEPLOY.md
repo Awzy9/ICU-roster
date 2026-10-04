@@ -8,7 +8,7 @@ This package is a static frontend with **no build step**.
 3. Framework preset: **Other**.
 4. Leave Build Command and Output Directory empty.
 
-Deploy these files together: `index.html`, `app.js`, `styles.css`, `roster-solver-worker.js`, `request.html`, `kamc-acrm-logo.jpg`, `vercel.json`.
+Deploy these files together: `index.html`, `app.js`, `xlsx-export.js`, `styles.css`, `roster-solver-worker.js`, `request.html`, `request.js`, `kamc-acrm-logo.jpg`, `vercel.json` (Vercel) or `netlify.toml` (Netlify). The security headers (CSP etc.) live in those two config files.
 
 ## Solver dependency
 Auto-Generate / Re-optimize use the connected Supabase Edge Function `icu-roster-solve` **v5** as the primary exact solver. The local `roster-solver-worker.js` remains a bounded fallback if the exact endpoint cannot be reached. The browser always performs an independent final safety audit before accepting a generated roster.

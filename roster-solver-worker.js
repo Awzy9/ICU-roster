@@ -36,7 +36,7 @@ function solveRosterFast(body){
   const weekendStartIdx=i=>{const d=dateObj(dates[i]).getUTCDay();if(saudi){if(d===5)return i;if(d===6)return i-1;}else{if(d===6)return i;if(d===0)return i-1;}return -999;};
   const weekendKeys=[...new Set(dates.map((_,i)=>isWeekendIdx(i)?weekendStartIdx(i):null).filter(x=>x!==null))].sort((a,b)=>a-b);
   const weekendCap=Math.ceil(weekendKeys.length/2);
-  const isResident=p=>p.level==='R1'||p.level==='R2';
+  const isResident=p=>p.level==='R1'||p.level==='R2'||p.level==='R3';
   const isRotator=p=>p.level==='Rotator';
   const isFellow=p=>p.level==='Fellow';
   const cap=p=>Math.min(globalMax,Math.max(1,Number(p.max)||31));

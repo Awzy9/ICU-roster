@@ -33,7 +33,7 @@ const defaultState=()=>{
   version:'10.8.2',
   month:'2026-09',
   published:false,
-  rules:{maxConsecutive:6,nightRest:true,maxAssignments:18,maxNightCalls:6,minNightGapDays:3,fairGap:3,saudiWeekend:true,minUnitBlock:3},
+  rules:{maxConsecutive:6,nightRest:true,maxAssignments:18,maxNightCalls:6,minNightGapDays:3,fairGap:3,saudiWeekend:true,minUnitBlock:3,continuePrevMonthUnits:true},
   shifts:[
     {id:'sA',code:'A',name:'MICU - Team A',type:'day',weekday:1,weekend:1,continuity:true},
     {id:'sB',code:'B',name:'MICU - Team B',type:'day',weekday:1,weekend:1,continuity:true},
@@ -253,6 +253,12 @@ function onApprovedLeave(person,date){return state.leaves.some(l=>l.person===per
 function requestFor(person,date,type){return state.requests.filter(r=>r.person===person&&r.date===date&&(!type||r.type===type));}
 function requiredCount(shift,date){if(isOverflowShift(shift))return 0;return Number(isWeekend(date)?shift.weekend:shift.weekday)||0;}
 function isOverflowShift(shift){return Number(shift?.overflowPriority||0)>0;}
+// Units have a minimum (weekday/weekend = required, always staffed) and an optional maximum.
+// Extra people up to the maximum are added after the required coverage is solved.
+function explicitMax(shift,weekend){const v=shift?.[weekend?'weekendMax':'weekdayMax'];return v===undefined||v===null||v===''?null:Number(v);}
+function hasExplicitMax(shift){return !isOverflowShift(shift)&&(explicitMax(shift,false)!==null||explicitMax(shift,true)!==null);}
+function maxCount(shift,date){const min=requiredCount(shift,date);if(isOverflowShift(shift))return min;const v=explicitMax(shift,isWeekend(date));return v!==null&&Number.isFinite(v)&&v>=min?v:min;}
+function countRangeText(shift,weekend){const min=Number(weekend?shift.weekend:shift.weekday)||0,max=explicitMax(shift,weekend);return max!==null&&Number.isFinite(max)&&max>min?`${min}–${max}`:String(min);}
 function overflowTarget(shift){return Math.max(1,Number(shift?.overflowTarget)||1);}
 function mandatoryShifts(){return state.shifts.filter(s=>!isOverflowShift(s));}
 function overflowShifts(){return state.shifts.filter(isOverflowShift).sort((a,b)=>Number(a.overflowPriority)-Number(b.overflowPriority));}
@@ -673,6 +679,38 @@ function assignContinuityBlocks(assignments,attempt,flexPlan,baseline){
   }
 }
 
+function maxFieldsFromForm(){const out={},wd=$('#shiftWeekdayMax').value.trim(),we=$('#shiftWeekendMax').value.trim();if(wd!=='')out.weekdayMax=Math.max(0,Math.min(10,Number(wd)||0));if(we!=='')out.weekendMax=Math.max(0,Math.min(10,Number(we)||0));return out;}
+function validateShiftMaxFields(){const pairs=[['Weekday','#shiftWeekday','#shiftWeekdayMax'],['Weekend','#shiftWeekend','#shiftWeekendMax']];for(const [label,minSel,maxSel] of pairs){const raw=$(maxSel).value.trim();if(raw==='')continue;const min=Math.max(0,Number($(minSel).value)||0),max=Number(raw);if(!Number.isFinite(max)||max<min)return{ok:false,message:`${label} maximum (${raw}) cannot be lower than the ${label.toLowerCase()} minimum (${min}).`};}return{ok:true};}
+// Days a person must cover together so an extra assignment forms a full continuity block
+// (and a complete weekend package when it touches a weekend).
+function extraCoverageWindow(date,block){const dates=monthDates(),i=dates.indexOf(date);let start=Math.min(i,Math.max(0,dates.length-block));const win=new Set(dates.slice(start,start+block));for(const d of [...win])if(isWeekend(d)){for(const p of weekendPairDates(weekendStart(d)))if(dates.includes(p))win.add(p);}return [...win].sort();}
+function assignMaxCoverage(assignments,flexPlan,baseline){
+  const minBlock=Math.max(1,Number(state.rules.minUnitBlock)||1);let added=0;
+  for(const s of state.shifts){
+    if(!hasExplicitMax(s))continue;
+    const block=continuityEnabled(s)?minBlock:1;
+    for(const date of monthDates()){
+      while(countShiftDate(assignments,date,s.id)<maxCount(s,date)){
+        const cands=activeStaff().filter(p=>candidateHard(p,date,s.id,assignments));
+        if(!cands.length)break;
+        cands.sort((p,q)=>candidateScore(p,date,s.id,assignments,flexPlan,baseline,Math.random)-candidateScore(q,date,s.id,assignments,flexPlan,baseline,Math.random));
+        let placed=false;
+        for(const p of cands){
+          const win=extraCoverageWindow(date,block),done=[];let ok=true;
+          for(const d of win){
+            if(assigned(p.id,d,assignments)===s.id)continue;
+            if(countShiftDate(assignments,d,s.id)>=maxCount(s,d)||!candidateHard(p,d,s.id,assignments)){ok=false;break;}
+            assignments[key(p.id,d)]=s.id;done.push(d);
+          }
+          if(ok&&done.length){placed=true;added+=done.length;break;}
+          for(const d of done)delete assignments[key(p.id,d)];
+        }
+        if(!placed)break;
+      }
+    }
+  }
+  return added;
+}
 function assignOverflowCoverage(assignments,flexPlan,baseline){
   const extras=overflowShifts();
   if(!extras.length)return;
@@ -784,7 +822,7 @@ function lockedMandatoryAssignments(){
   for(const [k,v] of Object.entries(state.assignments)){if(!state.locks[k]||!v)continue;const sh=shiftById(v);if(sh&&isOverflowShift(sh))optional.push({key:k,shift:v});else out[k]=v;}
   return{out,optional};
 }
-function buildSolverPayload(preserve=false){
+function buildSolverPayload(preserve=false,extraLocks={}){
   const {out:locked,optional}=lockedMandatoryAssignments();
   if(optional.length)throw new Error('Unlock optional ER/CCRT cells before auto-generation. Optional coverage is added only after every mandatory slot is solved.');
   const {first,last}=monthBounds(),activeIds=new Set(activeStaff().map(p=>p.id));
@@ -796,7 +834,7 @@ function buildSolverPayload(preserve=false){
     requests:state.requests.filter(r=>activeIds.has(r.person)&&r.date.startsWith(state.month)).map(r=>({person:r.person,date:r.date,type:r.type,shift:r.shift||''})),
     freeRequests:state.freeRequests.filter(r=>activeIds.has(r.person)&&r.to>=first&&r.from<=last).map(r=>({person:r.person,days:Number(r.days)||1,from:r.from,to:r.to,consecutive:!!r.consecutive,hard:!!r.hard})),
     rules:{...state.rules},
-    lockedAssignments:locked,
+    lockedAssignments:{...extraLocks,...locked},
     baselineAssignments:preserve?{...state.assignments}:null,
     preserve:!!preserve
   };
@@ -853,8 +891,51 @@ async function callHeuristicRosterSolver(preserve=false){
   const a=best?auditAssignments(best):null;
   throw new Error(a?`Browser fallback could not complete the roster (${a.open.length} open slot(s), ${a.violations.length} hard violation(s)).`:'Browser fallback could not construct a feasible roster.');
 }
+// People who finished the previous month on a unit keep it into the first days of this month,
+// until their combined block reaches the minimum unit block. Locks are passed to the solver as
+// hard cells for this run only; if they make the roster infeasible we solve again without them.
+function monthStartContinuityLocks(){
+  const locks={},carried=[];
+  const minBlock=Math.max(1,Number(state.rules.minUnitBlock)||1);
+  if(state.rules.continuePrevMonthUnits===false||minBlock<=1)return{locks,carried};
+  const prev=monthValueOffset(state.month,-1),prevAssignments=state.monthStore?.[prev]?.assignments;
+  if(!prevAssignments)return{locks,carried};
+  const dates=monthDates(),lastPrev=addDays(dates[0],-1),userLocked=lockedMandatoryAssignments().out,used=new Map();
+  const bump=(d,sid)=>used.set(d+'|'+sid,(used.get(d+'|'+sid)||0)+1);
+  for(const [k,sid] of Object.entries(userLocked)){const sep=k.indexOf('|');if(sep>0)bump(k.slice(sep+1),sid);}
+  for(const p of activeStaff()){
+    const sid=prevAssignments[key(p.id,lastPrev)],sh=sid?shiftById(sid):null;
+    if(!sh||!continuityEnabled(sh)||!p.eligible.includes(sid))continue;
+    let run=0,d=lastPrev;while(prevAssignments[key(p.id,d)]===sid&&d.startsWith(prev)){run++;d=prevDate(d);}
+    const extra=minBlock-run;if(extra<=0)continue;
+    const days=[];
+    for(let i=0;i<extra&&i<dates.length;i++){
+      const day=dates[i],cell=key(p.id,day);
+      if(onApprovedLeave(p.id,day)||userLocked[cell]||state.assignments[cell]&&state.locks[cell]||(used.get(day+'|'+sid)||0)>=requiredCount(sh,day))break;
+      days.push(day);
+    }
+    // A weekend package is both weekend days or none: keep the pair together or stop before it.
+    for(const day of [...days])if(isWeekend(day)){for(const q of weekendPairDates(weekendStart(day))){if(!dates.includes(q)||days.includes(q))continue;const cell=key(p.id,q);if(!onApprovedLeave(p.id,q)&&!userLocked[cell]&&(used.get(q+'|'+sid)||0)<requiredCount(sh,q))days.push(q);else{days.splice(days.findIndex(x=>isWeekend(x)),days.length);break;}}}
+    if(!days.length)continue;
+    for(const day of days){locks[key(p.id,day)]=sid;bump(day,sid);}
+    carried.push({person:p.id,shift:sid,days:[...days]});
+  }
+  return{locks,carried};
+}
+async function solveWithFallback(payload){
+  try{return await callServerRosterSolver(payload);}catch(serverError){
+    try{return await callBrowserRosterSolver(payload);}catch(browserError){
+      throw new Error(`Exact server solver failed: ${serverError.message} Browser fallback also failed: ${browserError.message}`);
+    }
+  }
+}
 async function callRosterSolver(preserve=false){
   const ruleCheck=validateRuleSet();if(!ruleCheck.ok)throw new Error(ruleCheck.message);
+  const carry=monthStartContinuityLocks();
+  if(carry.carried.length){
+    try{const solved=await solveWithFallback(buildSolverPayload(preserve,carry.locks));return{...solved,continuityCarried:carry.carried.length};}
+    catch(e){const solved=await solveWithFallback(buildSolverPayload(preserve));return{...solved,continuityCarried:0,continuityDropped:carry.carried.length};}
+  }
   const payload=buildSolverPayload(preserve);
   // v10.8.2: use the deployed exact solver first. The browser worker remains a bounded fallback
   // for transient network/server failures; every candidate still has to pass the independent local audit.
@@ -882,6 +963,7 @@ async function generate(preserve=false,options={}){
     // Optional ER/CCRT is added only when every mandatory slot is filled. A roster
     // intentionally left with weekend on-call gaps remains a Draft for manual completion.
     if(!mandatoryAudit.open.length)assignOverflowCoverage(candidate,buildFlexPlan(0,preserve?before:null),preserve?before:null);
+    const extrasAdded=mandatoryAudit.open.length?0:assignMaxCoverage(candidate,buildFlexPlan(0,preserve?before:null),preserve?before:null);
     const finalAudit=auditAssignments(candidate);
     const finalSeen=new Map(),finalUnexpected=[];const finalIntentional=[];
     for(const x of finalAudit.open){const k=x.date+'|'+x.shift,n=(finalSeen.get(k)||0)+1;finalSeen.set(k,n);if(n<=(expectedCounts.get(k)||0))finalIntentional.push(x);else finalUnexpected.push(x);}
@@ -890,7 +972,7 @@ async function generate(preserve=false,options={}){
     if(options.dryRun)return{ok:true,assignments:candidate,audit:finalAudit,changes,elapsedMs:solved.elapsedMs||0,partial,plannedOpen:finalIntentional};
     state.assignments=candidate;state.published=false;
     const openText=partial?` ${finalIntentional.length} weekend on-call slot${finalIntentional.length===1?' was':'s were'} intentionally left OPEN for manual assignment so Auto-Generate does not give anyone an extra weekend.`:' Mandatory coverage is complete with 0 hard-rule violations.';
-    logAction(preserve?'Re-optimized roster':'Generated roster',`${changes} assignment cell${changes===1?'':'s'} changed.${openText}${solved.elapsedMs?` · solver ${Math.round(solved.elapsedMs/100)/10}s`:''}`);
+    logAction(preserve?'Re-optimized roster':'Generated roster',`${changes} assignment cell${changes===1?'':'s'} changed.${openText}${solved.continuityCarried?` ${solved.continuityCarried} staff member${solved.continuityCarried===1?'':'s'} continued their end-of-month unit into the start of this month.`:''}${solved.continuityDropped?` Could not keep ${solved.continuityDropped} end-of-month unit continuation${solved.continuityDropped===1?'':'s'} without breaking a hard rule, so they were not forced.`:''}${extrasAdded?` ${extrasAdded} extra assignment${extrasAdded===1?'':'s'} added to bring units toward their maximum.`:''}${solved.elapsedMs?` · solver ${Math.round(solved.elapsedMs/100)/10}s`:''}`);
     if(!options.silent){
       renderAll();showAudit(finalAudit);
       if(partial){const b=$('#auditBanner');if(b){b.classList.remove('hidden','ok','bad');b.classList.add('warn');const examples=finalIntentional.slice(0,6).map(x=>`${x.date} ${shiftById(x.shift)?.code||x.shift}`).join(', ');b.textContent=`Roster generated safely under the weekend cap. ${finalIntentional.length} weekend on-call slot${finalIntentional.length===1?' is':'s are'} intentionally OPEN for you to assign manually${examples?`: ${examples}`:''}. Publish remains blocked until you complete them.`;}}
@@ -927,6 +1009,7 @@ function auditAssignments(assignments){
   }
 
   const violations=[],warnings=[];
+  for(const date of monthDates())for(const s of state.shifts.filter(hasExplicitMax)){const have=countShiftDate(assignments,date,s.id),max=maxCount(s,date);if(have>max)violations.push(`${s.code} has ${have} assigned on ${date}; the maximum for this unit is ${max}.`);}
   const activeIds=new Set(activeStaff().map(p=>p.id)),knownStaff=new Set(state.staff.map(p=>p.id)),knownShifts=new Set(state.shifts.map(sh=>sh.id));
   for(const [k,v] of Object.entries(assignments||{})){
     if(!v)continue;const sep=k.indexOf('|');if(sep<1)continue;const pid=k.slice(0,sep),d=k.slice(sep+1);if(!d.startsWith(state.month))continue;
@@ -1198,6 +1281,16 @@ async function supabaseRpc(name,args){
 }
 function portalBaseUrl(){if(location.protocol==='http:'||location.protocol==='https:')return location.href.replace(/[^/?#]+(?:[?#].*)?$/,'');return '';}
 function portalPersonalLink(staffId){const rp=state.remotePortal,token=rp?.staffTokens?.[staffId];if(!rp?.portalId||!token||!staffId)return'';const q=`portal=${encodeURIComponent(rp.portalId)}&staff=${encodeURIComponent(staffId)}&token=${encodeURIComponent(token)}`;const base=portalBaseUrl();return base?`${base}request.html#${q}`:`request.html#${q}`;}
+function hexToBase64Url(hex){let bin='';for(let i=0;i+1<hex.length;i+=2)bin+=String.fromCharCode(parseInt(hex.slice(i,i+2),16));return btoa(bin).split('+').join('-').split('/').join('_').split('=').join('');}
+// Public link: carries every active staff member's token (compact base64url) so the request page can let
+// each person pick their own name. Mode is 'flex' (requests & leave) or 'swap'. Requests stay pending until approved.
+function portalPublicLink(mode){
+  const rp=state.remotePortal;if(!rp?.portalId)return'';
+  const keys=activeStaff().filter(p=>rp.staffTokens?.[p.id]).map(p=>encodeURIComponent(p.id)+'.'+hexToBase64Url(rp.staffTokens[p.id]));
+  if(!keys.length)return'';
+  const q=`portal=${encodeURIComponent(rp.portalId)}&m=${mode}&k=${keys.join('~')}`,base=portalBaseUrl();
+  return base?`${base}request.html#${q}`:`request.html#${q}`;
+}
 function portalLink(){return portalPersonalLink($('#portalStaffSelect')?.value||activeStaff()[0]?.id||'');}
 function portalAssignmentPayload(){const out={};for(const p of activeStaff())for(const d of monthDates()){const v=assigned(p.id,d);if(v)out[key(p.id,d)]=v;}return out;}
 async function syncStaffPortal(showStatus=true,active=true){
@@ -1233,8 +1326,8 @@ async function syncKnownPortalsAfterPermanentStaffDelete(){
 function populatePortalStaffSelect(){const sel=$('#portalStaffSelect');if(!sel)return;const old=sel.value;sel.innerHTML=activeStaff().map(p=>`<option value="${esc(p.id)}">${esc(p.name)}${p.level?` — ${esc(p.level)}`:''}</option>`).join('');if(activeStaff().some(p=>p.id===old))sel.value=old;}
 function renderPortalStatus(){
   const input=$('#staffRequestLink'),status=$('#portalStatus');if(!input||!status)return;populatePortalStaffSelect();
-  if(!state.remotePortal?.portalId){input.value='';status.textContent='Not synced yet. Create the portal after deploying this site.';status.className='muted portal-status';return;}
-  ensurePortalIdentity();input.value=portalLink();const local=location.protocol!=='http:'&&location.protocol!=='https:',active=state.remotePortal.active!==false;
+  const pubReq=$('#publicRequestLink'),pubSwap=$('#publicSwapLink');if(!state.remotePortal?.portalId){input.value='';if(pubReq)pubReq.value='';if(pubSwap)pubSwap.value='';status.textContent='Not synced yet. Create the portal after deploying this site.';status.className='muted portal-status';return;}
+  ensurePortalIdentity();input.value=portalLink();if(pubReq)pubReq.value=portalPublicLink('flex');if(pubSwap)pubSwap.value=portalPublicLink('swap');const local=location.protocol!=='http:'&&location.protocol!=='https:',active=state.remotePortal.active!==false;
   if(!active){status.textContent=`Portal is deactivated for ${formatMonthLabel(state.month)}. Personal links no longer accept requests.`;status.className='portal-status bad';return;}
   if(state.remotePortal.syncState==='error'){status.textContent=`Portal out of sync${state.remotePortal.syncError?': '+state.remotePortal.syncError:''}. Press Create / Sync Portal to retry before relying on staff links.`;status.className='portal-status bad';return;}
   if(state.remotePortal.syncState==='pending'||state.remotePortal.syncState==='syncing'){status.textContent=state.remotePortal.syncState==='pending'?'Local roster changed — portal sync pending…':'Syncing personal staff links and roster…';status.className='portal-status warn';return;}
@@ -1451,7 +1544,8 @@ function inferredBulkProfile(name,defaults,autoDetect=true){
   let level=defaults.level,group=defaults.group;
   const text=String(name||'').trim();
   if(autoDetect){
-    if(/\bR2\b/i.test(text)){level='R2';group='ICU Residents';}
+    if(/\bR3\b/i.test(text)){level='R3';group='ICU Residents';}
+    else if(/\bR2\b/i.test(text)){level='R2';group='ICU Residents';}
     else if(/\bR1\b/i.test(text)){level='R1';group='ICU Residents';}
     else if(/\bFellow\b/i.test(text)){level='Fellow';group='Fellows';}
     else if(/\bER\b/i.test(text)){level='Rotator';group='ER Rotators';}
@@ -1461,7 +1555,7 @@ function inferredBulkProfile(name,defaults,autoDetect=true){
   return{level,group};
 }
 function defaultEligibilityFor(level){
-  if(level==='R2'||level==='Fellow')return[...allShiftIds];
+  if(level==='R2'||level==='R3'||level==='Fellow')return[...allShiftIds];
   if(level==='R1')return[...dayShiftIds,'sMT','sGR'];
   return[...dayShiftIds];
 }
@@ -1480,7 +1574,7 @@ function parseBulkStaffText(text){
       if(m){name=m[1].trim();pager=m[2].replace(/\s+/g,' ');}
     }else{
       for(const f of fields.slice(1)){
-        if(/^(R1|R2|Fellow|Rotator)$/i.test(f))explicitLevel=f.replace(/^r/i,'R').replace(/^fellow$/i,'Fellow').replace(/^rotator$/i,'Rotator');
+        if(/^(R1|R2|R3|Fellow|Rotator)$/i.test(f))explicitLevel=f.replace(/^r/i,'R').replace(/^fellow$/i,'Fellow').replace(/^rotator$/i,'Rotator');
         else if(/^\+?[0-9][0-9\s-]{2,}$/.test(f))pager=f;
         else if(!explicitGroup)explicitGroup=f;
       }
@@ -1586,7 +1680,7 @@ function renderStaffSheet(){
   state.staff.forEach((p,rowIndex)=>{
     h+=`<tr data-staff-id="${p.id}"><td class="select-col"><input class="sheet-staff-select" type="checkbox" data-id="${p.id}" ${selectedStaffIds.has(p.id)?'checked':''}></td>`+
       `<td><input class="sheet-cell" data-row="${rowIndex}" data-field="name" value="${esc(p.name)}"></td>`+
-      `<td><select class="sheet-cell" data-row="${rowIndex}" data-field="level"><option ${p.level==='R1'?'selected':''}>R1</option><option ${p.level==='R2'?'selected':''}>R2</option><option ${p.level==='Fellow'?'selected':''}>Fellow</option><option ${p.level==='Rotator'?'selected':''}>Rotator</option></select></td>`+
+      `<td><select class="sheet-cell" data-row="${rowIndex}" data-field="level"><option ${p.level==='R1'?'selected':''}>R1</option><option ${p.level==='R2'?'selected':''}>R2</option><option ${p.level==='R3'?'selected':''}>R3</option><option ${p.level==='Fellow'?'selected':''}>Fellow</option><option ${p.level==='Rotator'?'selected':''}>Rotator</option></select></td>`+
       `<td><input class="sheet-cell" data-row="${rowIndex}" data-field="group" value="${esc(p.group||'')}"></td>`+
       `<td><input class="sheet-cell pager-sheet-cell" data-row="${rowIndex}" data-field="pager" value="${esc(p.pager||'')}"></td>`+
       `<td><input class="sheet-cell max-sheet-cell" data-row="${rowIndex}" data-field="max" type="number" min="1" max="40" value="${Number(p.max)||16}"></td>`+
@@ -1654,20 +1748,20 @@ This destructive action erases this person's related roster data across ALL save
 }
 
 function renderShifts(){
-  const t=$('#shiftTable');let h='<thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Role</th><th>Weekdays</th><th>Weekends</th><th>Continuity</th><th>Coverage This Month</th><th class="actions">Actions</th></tr></thead><tbody>';
+  const t=$('#shiftTable');let h='<thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Role</th><th>Weekdays (min–max)</th><th>Weekends (min–max)</th><th>Continuity</th><th>Coverage This Month</th><th class="actions">Actions</th></tr></thead><tbody>';
   for(const s of state.shifts){
     const need=monthDates().reduce((n,d)=>n+requiredCount(s,d),0),have=Object.values(state.assignments).filter(v=>v===s.id).length;
     const role=isOverflowShift(s)?`Overflow #${s.overflowPriority}`:'Required';
     const cov=isOverflowShift(s)?`${have} assigned when capacity allows`:`${have}/${need}`;
     const covClass=isOverflowShift(s)?'coverage-ok':(have>=need?'coverage-ok':'coverage-bad');
-    h+=`<tr><td><b>${esc(s.code)}</b></td><td>${esc(s.name)}</td><td>${s.type==='night'?'Night':'Day'}</td><td>${esc(role)}</td><td>${s.weekday}</td><td>${s.weekend}</td><td>${continuityEnabled(s)?`Min ${state.rules.minUnitBlock} days`:'—'}</td><td class="${covClass}">${esc(cov)}</td><td class="actions"><button class="mini-btn edit-shift" data-id="${s.id}">Edit</button><button class="mini-btn danger del-shift" data-id="${s.id}">Delete</button></td></tr>`;
+    h+=`<tr><td><b>${esc(s.code)}</b></td><td>${esc(s.name)}</td><td>${s.type==='night'?'Night':'Day'}</td><td>${esc(role)}</td><td>${countRangeText(s,false)}</td><td>${countRangeText(s,true)}</td><td>${continuityEnabled(s)?`Min ${state.rules.minUnitBlock} days`:'—'}</td><td class="${covClass}">${esc(cov)}</td><td class="actions"><button class="mini-btn edit-shift" data-id="${s.id}">Edit</button><button class="mini-btn danger del-shift" data-id="${s.id}">Delete</button></td></tr>`;
   }
   h+='</tbody>';t.innerHTML=h;
   t.querySelectorAll('.edit-shift').forEach(b=>b.onclick=()=>openShiftForm(b.dataset.id));t.querySelectorAll('.del-shift').forEach(b=>b.onclick=()=>deleteShift(b.dataset.id));
 }
 
 function openShiftForm(id=null){
-  editingShift=id;const s=id?shiftById(id):null;$('#shiftFormTitle').textContent=s?'Edit Unit / Shift':'Add Unit / Shift';$('#shiftCode').value=s?.code||'';$('#shiftName').value=s?.name||'';$('#shiftType').value=s?.type||'day';$('#shiftWeekday').value=s?.weekday??1;$('#shiftWeekend').value=s?.weekend??1;$('#shiftContinuity').checked=s?.continuity??true;syncShiftContinuityControl();$('#shiftForm').classList.remove('hidden');
+  editingShift=id;const s=id?shiftById(id):null;$('#shiftFormTitle').textContent=s?'Edit Unit / Shift':'Add Unit / Shift';$('#shiftCode').value=s?.code||'';$('#shiftName').value=s?.name||'';$('#shiftType').value=s?.type||'day';$('#shiftWeekday').value=s?.weekday??1;$('#shiftWeekend').value=s?.weekend??1;$('#shiftWeekdayMax').value=explicitMax(s,false)??'';$('#shiftWeekendMax').value=explicitMax(s,true)??'';$('#shiftContinuity').checked=s?.continuity??true;syncShiftContinuityControl();$('#shiftForm').classList.remove('hidden');
 }
 function syncShiftContinuityControl(){const night=$('#shiftType').value==='night';$('#shiftContinuity').disabled=night;if(night)$('#shiftContinuity').checked=false;}
 function deleteShift(id){
@@ -1772,6 +1866,7 @@ function renderRules(){
   $('#ruleNightRest').checked=state.rules.nightRest;
   $('#ruleFairGap').value=state.rules.fairGap;
   $('#ruleSaudiWeekend').checked=state.rules.saudiWeekend;
+  $('#ruleContinuePrevMonth').checked=state.rules.continuePrevMonthUnits!==false;
   const wc=$('#weekendCapSummary');if(wc)wc.textContent=`${weekendBlocksInMonth().length} weekends this month → hard max ${weekendCap()} per staff member`;
   const ww=$('#weekendPackageSummary');if(ww)ww.textContent=state.rules.saudiWeekend?'1 weekend on-call OR both Friday + Saturday day shifts':'1 weekend on-call OR both Saturday + Sunday day shifts';
 }
@@ -1868,6 +1963,61 @@ async function clearAllShifts(){
   }
 }
 
+// ---- Excel export (roster, coverage, units, workload) ----
+function buildWorkbookSheets(){
+  const S=IcuXlsx.STYLE,dates=monthDates(),groups=[...new Set(activeStaff().map(p=>p.group||''))];
+  const staff=groups.flatMap(g=>activeStaff().filter(p=>(p.group||'')===g));
+  const dayHead=d=>({v:dayName(d).slice(0,3)+String.fromCharCode(10)+Number(d.slice(8)),s:isWeekend(d)?S.WEEKEND_HEADER:S.HEADER});
+  const title=`ICU Roster — ${formatMonthLabel(state.month)} (${state.published?'Final':'Draft'})`;
+  const roster=[[{v:title,s:S.TITLE}],[{v:'Name',s:S.HEADER},{v:'Level',s:S.HEADER},{v:'Group',s:S.HEADER},...dates.map(dayHead),{v:'Credits',s:S.HEADER},{v:'On-calls',s:S.HEADER},{v:'Weekends',s:S.HEADER}]];
+  for(const p of staff){
+    const c=countsFor(p.id);
+    const cells=dates.map(d=>{
+      const sid=assigned(p.id,d),sh=sid?shiftById(sid):null;
+      if(sh)return{v:sh.code,s:isNight(sid)?S.ONCALL:(isWeekend(d)?S.WEEKEND:S.CENTER)};
+      if(onApprovedLeave(p.id,d))return{v:'L',s:S.LEAVE};
+      return{v:'',s:isWeekend(d)?S.WEEKEND:S.CENTER};
+    });
+    roster.push([{v:p.name,s:S.NAME},{v:p.level||'',s:S.CENTER},{v:displayGroupName(p.group||''),s:S.NAME},...cells,{v:c.total,s:S.CENTER},{v:c.nights,s:S.CENTER},{v:c.weekends,s:S.CENTER}]);
+  }
+  roster.push([],[{v:'Legend',s:S.TITLE}]);
+  for(const s of state.shifts)roster.push([{v:s.code,s:S.CENTER},{v:s.name,s:S.NAME},{v:s.type==='night'?'On-call (2 credits)':'Day unit (1 credit)',s:S.NAME}]);
+  roster.push([{v:'L',s:S.LEAVE},{v:'Approved leave',s:S.NAME}]);
+  const rosterSheet={name:'Roster',rows:roster,colWidths:[26,9,20,...dates.map(()=>5.5),9,9,10],freeze:{row:2,col:3},merges:['A1:H1']};
+
+  const coverage=[[{v:'Unit',s:S.HEADER},...dates.map(dayHead),{v:'Min–Max (weekday / weekend)',s:S.HEADER}]];
+  for(const s of state.shifts){
+    const cells=dates.map(d=>{const have=countShiftDate(state.assignments,d,s.id),need=requiredCount(s,d);
+      if(isOverflowShift(s))return{v:have,s:S.CENTER};
+      return{v:`${have}/${need}`,s:have<need?S.OPEN:(isWeekend(d)?S.WEEKEND:S.CENTER)};});
+    coverage.push([{v:`${s.code} — ${s.name}`,s:S.NAME},...cells,{v:`${countRangeText(s,false)} / ${countRangeText(s,true)}`,s:S.CENTER}]);
+  }
+  const coverageSheet={name:'Coverage',rows:coverage,colWidths:[30,...dates.map(()=>6),24],freeze:{row:1,col:1}};
+
+  const units=[[{v:'Code',s:S.HEADER},{v:'Name',s:S.HEADER},{v:'Type',s:S.HEADER},{v:'Role',s:S.HEADER},{v:'Weekday min',s:S.HEADER},{v:'Weekday max',s:S.HEADER},{v:'Weekend min',s:S.HEADER},{v:'Weekend max',s:S.HEADER},{v:'Continuity block',s:S.HEADER}]];
+  for(const s of state.shifts){
+    const wdMax=explicitMax(s,false),weMax=explicitMax(s,true);
+    units.push([{v:s.code,s:S.CENTER},{v:s.name,s:S.NAME},{v:s.type==='night'?'On-call':'Day',s:S.CENTER},{v:isOverflowShift(s)?`Overflow #${s.overflowPriority}`:'Required',s:S.CENTER},
+      {v:Number(s.weekday)||0,s:S.CENTER},{v:wdMax===null?'':wdMax,s:S.CENTER},{v:Number(s.weekend)||0,s:S.CENTER},{v:weMax===null?'':weMax,s:S.CENTER},{v:continuityEnabled(s)?`≥ ${state.rules.minUnitBlock} days`:'—',s:S.CENTER}]);
+  }
+  const unitsSheet={name:'Units',rows:units,colWidths:[9,28,10,12,12,12,12,12,16],freeze:{row:1,col:0}};
+
+  const summary=[[{v:'Name',s:S.HEADER},{v:'Level',s:S.HEADER},{v:'Group',s:S.HEADER},{v:'Shift credits',s:S.HEADER},{v:'Credit limit',s:S.HEADER},{v:'Day shifts',s:S.HEADER},{v:'On-calls',s:S.HEADER},{v:'Weekends',s:S.HEADER},{v:'Fridays',s:S.HEADER},{v:'Saturdays',s:S.HEADER},{v:'Leave days',s:S.HEADER}]];
+  for(const p of staff){
+    const c=countsFor(p.id);
+    summary.push([{v:p.name,s:S.NAME},{v:p.level||'',s:S.CENTER},{v:displayGroupName(p.group||''),s:S.NAME},{v:c.total,s:S.CENTER},{v:effectiveMax(p),s:S.CENTER},{v:c.raw-c.nights,s:S.CENTER},{v:c.nights,s:S.CENTER},{v:c.weekends,s:S.CENTER},{v:c.fridays,s:S.CENTER},{v:c.saturdays,s:S.CENTER},{v:approvedLeaveDaysInCurrentMonth(p.id),s:S.CENTER}]);
+  }
+  const summarySheet={name:'Workload',rows:summary,colWidths:[26,9,20,13,12,11,10,10,9,10,11],freeze:{row:1,col:1}};
+  return[rosterSheet,coverageSheet,unitsSheet,summarySheet];
+}
+function exportExcel(){
+  try{
+    if(typeof IcuXlsx==='undefined')throw new Error('Excel exporter did not load. Hard-refresh the page and try again.');
+    if(!activeStaff().length)return alert('Add active staff members before exporting.');
+    IcuXlsx.download(`ICU-Roster-${state.month}${state.published?'':'-DRAFT'}.xlsx`,buildWorkbookSheets());
+    logAction('Exported Excel',`${formatMonthLabel(state.month)} roster workbook downloaded.`);
+  }catch(e){alert('Excel export failed: '+(e.message||e));}
+}
 function secureBackupPayload(){
   storeCurrentMonth();
   const copy=JSON.parse(JSON.stringify(state));
@@ -1938,7 +2088,7 @@ function bind(){
 ${assignedCount} current-month assignment${assignedCount===1?'':'s'} will be cleared. Other months remain unchanged.`))return;const i=state.staff.findIndex(x=>x.id===editingStaff);state.staff[i]=obj;setStaffActiveForCurrentMonth(obj.id,activeThisMonth);logAction('Updated staff member',`${name}${activeThisMonth?' · active this month':' · inactive this month'}`);}else{addStaffToCurrentMonth(obj,activeThisMonth);logAction('Added staff member',`${name}${activeThisMonth?' · active this month':' · master list only'}`);}state.published=false;$('#staffForm').classList.add('hidden');editingStaff=null;renderAll();syncCurrentPortalAfterStaffChange();};
 
   $('#addShiftBtn').onclick=()=>openShiftForm();$('#cancelShiftBtn').onclick=()=>$('#shiftForm').classList.add('hidden');$('#shiftType').addEventListener('change',syncShiftContinuityControl);
-  $('#saveShiftBtn').onclick=()=>{const code=$('#shiftCode').value.trim().toUpperCase(),name=$('#shiftName').value.trim();if(!code||!name)return alert('Enter both the code and unit/shift name.');const type=$('#shiftType').value,existing=editingShift?shiftById(editingShift):null,obj={id:editingShift||uid('s'),code,name,type,weekday:Math.max(0,Number($('#shiftWeekday').value)||0),weekend:Math.max(0,Number($('#shiftWeekend').value)||0),continuity:type==='day'&&$('#shiftContinuity').checked,...(existing?.overflowPriority?{overflowPriority:existing.overflowPriority,overflowTarget:existing.overflowTarget||1}:{})};if(editingShift){const i=state.shifts.findIndex(x=>x.id===editingShift);state.shifts[i]=obj;logAction('Updated unit/shift',`${code} — ${name}`);}else{state.shifts.push(obj);logAction('Added unit/shift',`${code} — ${name}`);}invalidateAllPublished();$('#shiftForm').classList.add('hidden');editingShift=null;renderAll();};
+  $('#saveShiftBtn').onclick=()=>{const maxCheck=validateShiftMaxFields();if(!maxCheck.ok)return alert(maxCheck.message);const code=$('#shiftCode').value.trim().toUpperCase(),name=$('#shiftName').value.trim();if(!code||!name)return alert('Enter both the code and unit/shift name.');const type=$('#shiftType').value,existing=editingShift?shiftById(editingShift):null,obj={id:editingShift||uid('s'),code,name,type,weekday:Math.max(0,Number($('#shiftWeekday').value)||0),weekend:Math.max(0,Number($('#shiftWeekend').value)||0),...maxFieldsFromForm(),continuity:type==='day'&&$('#shiftContinuity').checked,...(existing?.overflowPriority?{overflowPriority:existing.overflowPriority,overflowTarget:existing.overflowTarget||1}:{})};if(editingShift){const i=state.shifts.findIndex(x=>x.id===editingShift);state.shifts[i]=obj;logAction('Updated unit/shift',`${code} — ${name}`);}else{state.shifts.push(obj);logAction('Added unit/shift',`${code} — ${name}`);}invalidateAllPublished();$('#shiftForm').classList.add('hidden');editingShift=null;renderAll();};
 
   $('#addLeaveBtn').onclick=()=>{const person=$('#leavePerson').value,from=$('#leaveFrom').value,to=$('#leaveTo').value;if(!person||!from||!to||to<from)return alert('Check the staff member and leave dates.');const l={id:uid('l'),person,from,to,status:$('#leaveStatus').value};state.leaves.push(l);if(l.status==='approved')invalidatePublishedRange(from,to);else state.published=false;logAction('Added leave',`${personById(person)?.name||'Staff'}: ${from} to ${to} (${l.status})`);renderAll();};
   $('#addRequestBtn').onclick=()=>{const person=$('#requestPerson').value,date=$('#requestDate').value,type=$('#requestType').value,shift=$('#requestShift').value;if(!person||!date)return alert('Select a staff member and date.');if((type==='prefer'||type==='avoid')&&!shift)return alert('Select the preferred or avoided shift.');state.requests.push({id:uid('q'),person,date,type,shift:type==='off'?'':shift});state.published=false;logAction('Added exact request',`${personById(person)?.name||'Staff'}: ${type} on ${date}`);renderAll();};
@@ -1947,7 +2097,7 @@ ${assignedCount} current-month assignment${assignedCount===1?'':'s'} will be cle
   $('#addSwapBtn').onclick=()=>{const personA=$('#swapPersonA').value,personB=$('#swapPersonB').value,dateA=$('#swapDateA').value,dateB=$('#swapDateB').value;if(!personA||!personB||!dateA||!dateB)return alert('Select both staff members and both dates.');const sw={id:uid('sw'),personA,personB,dateA,dateB,status:'pending'};const val=validateSwap(sw);state.swaps.unshift(sw);logAction('Created swap request',`${personById(personA)?.name||'Staff'} (${dateA}) ⇄ ${personById(personB)?.name||'Staff'} (${dateB}) — ${val.ok?'valid':'needs review'}`);renderAll();if(!val.ok)alert('Swap request saved, but it cannot be approved yet: '+val.message);};
   ['swapPersonA','swapPersonB','swapDateA','swapDateB'].forEach(id=>$('#'+id).addEventListener('change',updateSwapPreviews));
 
-  ['ruleMinUnitBlock','ruleConsecutive','ruleMaxAssignments','ruleMaxNightCalls','ruleMinNightGapDays','ruleNightRest','ruleFairGap','ruleSaudiWeekend'].forEach(id=>$('#'+id).addEventListener('change',()=>{
+  ['ruleMinUnitBlock','ruleConsecutive','ruleMaxAssignments','ruleMaxNightCalls','ruleMinNightGapDays','ruleNightRest','ruleFairGap','ruleSaudiWeekend','ruleContinuePrevMonth'].forEach(id=>$('#'+id).addEventListener('change',()=>{
     state.rules.minUnitBlock=Math.max(1,Math.min(7,Number($('#ruleMinUnitBlock').value)||3));
     state.rules.maxConsecutive=Math.max(1,Math.min(12,Number($('#ruleConsecutive').value)||6));
     state.rules.maxAssignments=Math.max(1,Math.min(31,Number($('#ruleMaxAssignments').value)||18));
@@ -1956,6 +2106,7 @@ ${assignedCount} current-month assignment${assignedCount===1?'':'s'} will be cle
     state.rules.nightRest=$('#ruleNightRest').checked;
     state.rules.fairGap=Math.max(0,Math.min(10,Number($('#ruleFairGap').value)||0));
     state.rules.saudiWeekend=$('#ruleSaudiWeekend').checked;
+    state.rules.continuePrevMonthUnits=$('#ruleContinuePrevMonth').checked;
     const ruleCheck=validateRuleSet(state.rules);if(!ruleCheck.ok){alert(ruleCheck.message);state.rules.maxConsecutive=Math.max(state.rules.maxConsecutive,state.rules.minUnitBlock);renderRules();return;}
     invalidateAllPublished();
     logAction('Updated scheduling rules',`Unit block ≥${state.rules.minUnitBlock} days; max ${state.rules.maxAssignments} shift credits (day=1/on-call=2); max ${state.rules.maxNightCalls} on-calls; on-call spacing ≥${minimumNightGapDays()} calendar days; all-staff weekend cap ${weekendCap()}; max consecutive ${state.rules.maxConsecutive}; protected post-call day ${state.rules.nightRest?'on':'off'}.`);
@@ -1965,11 +2116,15 @@ ${assignedCount} current-month assignment${assignedCount===1?'':'s'} will be cle
   $('#calcUseCurrentMonthBtn')?.addEventListener('click',()=>{const el=$('#calcMonthDays');el.value=monthDates().length;delete el.dataset.userEdited;updateLeaveCalculator();});
   $('#calcSetCounterBaseBtn')?.addEventListener('click',()=>{state.counterSettings.baseShifts=Math.max(0,Number($('#calcAverageShifts').value)||0);renderCounter();save();});
   $('#counterBaseShifts')?.addEventListener('change',()=>{state.counterSettings.baseShifts=Math.max(0,Math.min(40,Number($('#counterBaseShifts').value)||0));renderCounter();save();});
+  $('#exportExcelBtn').onclick=exportExcel;
   $('#syncPortalBtn').onclick=()=>syncStaffPortal(true,true);
   $('#refreshRemoteRequestsBtn').onclick=refreshRemoteRequests;
   $('#regenerateStaffLinksBtn').onclick=regenerateStaffLinks;
   $('#deactivatePortalBtn').onclick=deactivateStaffPortal;
   $('#portalStaffSelect').addEventListener('change',renderPortalStatus);
+  const copyPublic=async(mode,inputId,label)=>{const link=portalPublicLink(mode);if(!link)return alert('Create/sync the staff request portal first.');if(state.remotePortal?.active===false)return alert('The request portal is deactivated. Reactivate it with Create / Sync Portal before sharing links.');if(!confirm(`This ${label} link lets anyone who has it submit as ANY staff member (requests still need your approval).\n\nShare it only in your private staff group. Copy it?`))return;try{await navigator.clipboard.writeText(link);$('#portalStatus').textContent=`Public ${label} link copied.`;$('#portalStatus').className='portal-status ok';}catch(e){const input=$(inputId);input.focus();input.select();alert('Copy the selected link manually.');}};
+  $('#copyPublicRequestLinkBtn').onclick=()=>copyPublic('flex','#publicRequestLink','request & leave');
+  $('#copyPublicSwapLinkBtn').onclick=()=>copyPublic('swap','#publicSwapLink','swap');
   $('#copyRequestLinkBtn').onclick=async()=>{const link=portalLink();if(!link)return alert('Create/sync the staff request portal and select a staff member first.');if(state.remotePortal?.active===false)return alert('The request portal is deactivated. Reactivate it with Create / Sync Portal before sharing links.');try{await navigator.clipboard.writeText(link);$('#portalStatus').textContent='Personal request link copied for '+(personById($('#portalStaffSelect').value)?.name||'staff')+'.';$('#portalStatus').className='portal-status ok';}catch(e){const input=$('#staffRequestLink');input.focus();input.select();alert('Copy the selected personal link and send it only to that staff member.');}};
   $('#clearLogBtn').onclick=()=>{if(confirm('Clear the local activity log?')){state.activity=[];renderAll();}};
 }

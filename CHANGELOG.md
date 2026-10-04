@@ -1,3 +1,12 @@
+# Unreleased
+
+- Added **R3** as a staff level (senior resident: eligible for all units, grouped with ICU Residents).
+- Units now have an optional **maximum** per weekday/weekend next to the minimum (required) count. Required coverage is solved first; extra staff are then added up to the maximum using spare capacity, in full continuity blocks. Over-maximum coverage is flagged by the audit.
+- **Month-boundary continuity:** staff who finish the previous month on a unit keep it into the first days of the new month until their block reaches the minimum unit block (rule can be turned off). If the locks make the roster infeasible, generation retries without them and says so.
+- **Export Excel**: roster grid, coverage, units (min/max) and workload as a .xlsx workbook, generated in the browser with no external library.
+- **Public request links** (requests/leave and swaps): one link for the whole team where each person picks their own name. Requests stay pending until approved. Note that a public link embeds every active staff member's token, so anyone holding it can submit as any staff member; use *Regenerate Personal Links* to cancel all links.
+- Security: CSP and other headers, credentials in the URL fragment (scrubbed after load), optional `ALLOWED_ORIGINS` for the solver function.
+
 # v10.8.2 — Safe Staff Lifecycle / Month Isolation
 
 - Added explicit per-month staff membership; legacy `null` membership is migrated once to a concrete staff-ID list.

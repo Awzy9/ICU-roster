@@ -26,12 +26,13 @@ function loadApp(overrides={}){
     setStaffActiveForCurrentMonth:typeof setStaffActiveForCurrentMonth==='function'?setStaffActiveForCurrentMonth:undefined,
     purgeStaffIds:typeof purgeStaffIds==='function'?purgeStaffIds:undefined,
     weekendCapacityAnalysis:typeof weekendCapacityAnalysis==='function'?weekendCapacityAnalysis:undefined,
-    buildSolverPayload:typeof buildSolverPayload==='function'?buildSolverPayload:undefined
+    buildSolverPayload:typeof buildSolverPayload==='function'?buildSolverPayload:undefined,
+    assignMaxCoverage,buildFlexPlan,hasExplicitMax,maxCount,monthStartContinuityLocks,buildWorkbookSheets,portalPublicLink,hexToBase64Url
   };
 })();`);
   const sandbox={console,setTimeout,clearTimeout,TextEncoder,TextDecoder,URL,Blob,crypto:globalThis.crypto,
     localStorage:{getItem(){return null},setItem(){}},document:{querySelector(){return null},querySelectorAll(){return[]},body:{appendChild(){}}},
-    window:{},location:{protocol:'https:',href:'https://example.test/index.html'},navigator:{clipboard:{writeText:async()=>{}}},alert(){},confirm(){return true},fetch:overrides.fetch||(async()=>{throw new Error('unexpected fetch')}),Worker:overrides.Worker};
+    window:{},location:{protocol:'https:',href:'https://example.test/index.html'},navigator:{clipboard:{writeText:async()=>{}}},alert(){},confirm(){return true},fetch:overrides.fetch||(async()=>{throw new Error('unexpected fetch')}),Worker:overrides.Worker,btoa:globalThis.btoa,atob:globalThis.atob,IcuXlsx:require('../xlsx-export.js')};
   sandbox.globalThis=sandbox;vm.createContext(sandbox);vm.runInContext(src,sandbox,{filename:'app.js'});return sandbox.__rotaTest;
 }
 function baseState(api){const s=api.defaultState();s.monthStore={};s.assignments={};s.locks={};s.swaps=[];s.published=false;return s;}
@@ -163,6 +164,87 @@ test('solver payload excludes inactive staff requests and hard free-day requests
   s.freeRequests=[{id:'f1',person:'b',days:2,from:'2026-09-10',to:'2026-09-15',consecutive:true,hard:true},{id:'f2',person:'a',days:2,from:'2026-09-16',to:'2026-09-20',consecutive:true,hard:true}];
   s.monthStore={'2026-09':{assignments:{},locks:{},swaps:[],published:false,activeStaffIds:['a'],remotePortal:null}};api.setState(s);
   const payload=api.buildSolverPayload(false);assert.deepEqual(payload.requests.map(x=>x.person),['a']);assert.deepEqual(payload.freeRequests.map(x=>x.person),['a']);
+});
+
+function fixtureState(api,{staff,shifts,month='2026-09',rules={}}){
+  const s=baseState(api);s.month=month;s.staff=staff;s.activeStaffIds=staff.map(p=>p.id);s.shifts=shifts;s.leaves=[];s.requests=[];s.freeRequests=[];s.rules={...s.rules,...rules};
+  s.monthStore={[month]:{assignments:{},locks:{},swaps:[],published:false,activeStaffIds:staff.map(p=>p.id),remotePortal:null}};return s;
+}
+const person=(id,level='R2',eligible=['sA'])=>({id,name:id.toUpperCase(),level,group:'ICU',max:18,pager:'',eligible});
+
+test('R3 is a senior resident with all-unit eligibility like R2',()=>{
+  const api=loadApp();
+  assert.deepEqual(api.defaultEligibilityFor('R3').sort(),api.defaultEligibilityFor('R2').sort());
+  assert.ok(api.defaultEligibilityFor('R3').length>api.defaultEligibilityFor('R1').length);
+});
+
+test('unit maximum: extras are added up to the maximum, never beyond, and only when a maximum is set',()=>{
+  const api=loadApp();const staff=['a','b','c','d'].map(id=>person(id));
+  const s=fixtureState(api,{staff,shifts:[{id:'sA',code:'A',name:'A',type:'day',weekday:1,weekend:0,weekdayMax:3,continuity:false}]});api.setState(s);
+  assert.equal(api.hasExplicitMax(api.shiftById('sA')),true);
+  const cand={};for(let d=1;d<=30;d++){const day=String(d).padStart(2,'0');if(!api.isWeekend('2026-09-'+day))cand['a|2026-09-'+day]='sA';}
+  const added=api.assignMaxCoverage(cand,api.buildFlexPlan(0,null),null);
+  assert.ok(added>0,'extra assignments were added');
+  for(let d=1;d<=30;d++){const date='2026-09-'+String(d).padStart(2,'0');if(api.isWeekend(date))continue;const n=api.countShiftDate(cand,date,'sA');assert.ok(n>=1&&n<=3,date+' has '+n);}
+  assert.equal(api.auditAssignments(cand).violations.filter(v=>/maximum for this unit/.test(v)).length,0);
+  cand['b|2026-09-02']='sA';cand['c|2026-09-02']='sA';cand['d|2026-09-02']='sA';
+  assert.ok(api.auditAssignments(cand).violations.some(v=>/maximum for this unit is 3/.test(v)),'over-max coverage is flagged');
+  const s2=fixtureState(api,{staff,shifts:[{id:'sA',code:'A',name:'A',type:'day',weekday:1,weekend:0,continuity:false}]});api.setState(s2);
+  assert.equal(api.assignMaxCoverage({'a|2026-09-01':'sA'},api.buildFlexPlan(0,null),null),0,'no maximum set means no extras');
+});
+
+test('unit maximum cannot be below the minimum (treated as the minimum)',()=>{
+  const api=loadApp();const s=fixtureState(api,{staff:[person('a')],shifts:[{id:'sA',code:'A',name:'A',type:'day',weekday:2,weekend:1,weekdayMax:1,continuity:false}]});api.setState(s);
+  assert.equal(api.maxCount(api.shiftById('sA'),'2026-09-02'),2);
+});
+
+test('end-of-month units continue into the start of the new month until the minimum block',()=>{
+  const api=loadApp();const staff=['a','b','c','d'].map(id=>person(id,'R2',['sA','sB']));
+  const shifts=[{id:'sA',code:'A',name:'A',type:'day',weekday:1,weekend:1,continuity:true},{id:'sB',code:'B',name:'B',type:'day',weekday:1,weekend:1,continuity:true}];
+  const s=fixtureState(api,{staff,shifts,rules:{minUnitBlock:3}});
+  s.monthStore['2026-08']={assignments:{'a|2026-08-30':'sA','a|2026-08-31':'sA','b|2026-08-31':'sB','c|2026-08-29':'sA','c|2026-08-30':'sA','c|2026-08-31':'sA','d|2026-08-31':'sA'},locks:{},swaps:[],published:false,activeStaffIds:['a','b','c','d'],remotePortal:null};
+  s.leaves=[{id:'l1',person:'d',from:'2026-09-01',to:'2026-09-01',status:'approved'}];
+  api.setState(s);
+  const {locks,carried}=api.monthStartContinuityLocks();
+  assert.equal(locks['a|2026-09-01'],'sA');assert.equal(locks['a|2026-09-02'],undefined,'a already has 2 of 3 days');
+  assert.equal(locks['b|2026-09-01'],'sB');assert.equal(locks['b|2026-09-02'],'sB');
+  assert.equal(Object.keys(locks).some(k=>k.startsWith('c|')),false,'a full block already completed');
+  assert.equal(Object.keys(locks).some(k=>k.startsWith('d|')),false,'approved leave blocks the continuation');
+  assert.equal(carried.length,2);
+  const payload=api.buildSolverPayload(false,locks);assert.equal(payload.lockedAssignments['b|2026-09-02'],'sB');
+  const off=api.getState();off.rules.continuePrevMonthUnits=false;assert.equal(JSON.stringify(api.monthStartContinuityLocks().locks),'{}');
+});
+
+test('continuation never exceeds a unit\'s required staffing on a day',()=>{
+  const api=loadApp();const staff=['a','b'].map(id=>person(id,'R2',['sA']));
+  const s=fixtureState(api,{staff,shifts:[{id:'sA',code:'A',name:'A',type:'day',weekday:1,weekend:1,continuity:true}],rules:{minUnitBlock:3}});
+  s.monthStore['2026-08']={assignments:{'a|2026-08-31':'sA','b|2026-08-31':'sA'},locks:{},swaps:[],published:false,activeStaffIds:['a','b'],remotePortal:null};
+  api.setState(s);const {locks}=api.monthStartContinuityLocks();
+  assert.equal(Object.keys(locks).filter(k=>k.endsWith('2026-09-01')).length,1,'only one person fits the single required slot');
+});
+
+test('Excel workbook contains roster, coverage, units and workload sheets and builds a valid zip',()=>{
+  const api=loadApp();const staff=['a','b'].map(id=>person(id,'R3',['sA']));
+  const s=fixtureState(api,{staff,shifts:[{id:'sA',code:'A',name:'Unit A & <b>',type:'day',weekday:1,weekend:1,weekdayMax:2,continuity:false}]});s.monthStore['2026-09'].assignments={'a|2026-09-01':'sA'};api.setState(s);
+  const sheets=api.buildWorkbookSheets();
+  assert.equal(JSON.stringify(sheets.map(x=>x.name)),JSON.stringify(['Roster','Coverage','Units','Workload']));
+  assert.equal(sheets[0].rows[2][0].v,'A');assert.equal(sheets[0].rows[2][3].v,'A');
+  const bytes=require('../xlsx-export.js').build(sheets);assert.equal(String.fromCharCode(bytes[0],bytes[1]),'PK');
+});
+
+test('public links carry compact tokens for every active staff member and the right mode',()=>{
+  const api=loadApp();const staff=['a','b'].map(id=>person(id));
+  const s=fixtureState(api,{staff,shifts:[{id:'sA',code:'A',name:'A',type:'day',weekday:1,weekend:1,continuity:false}]});
+  const tokenA='00ff10'.repeat(10)+'abcd',tokenB='ab'.repeat(32);
+  s.remotePortal={portalId:'11111111-2222-3333-4444-555555555555',adminToken:'x',staffTokens:{a:tokenA,b:tokenB},active:true};
+  s.monthStore['2026-09'].remotePortal=s.remotePortal;api.setState(s);
+  const link=api.portalPublicLink('swap');
+  assert.ok(link.startsWith('https://example.test/request.html#portal=11111111-2222-3333-4444-555555555555&m=swap&k='),link);
+  const keys=link.split('&k=')[1].split('~');assert.equal(keys.length,2);
+  assert.ok(keys[0].startsWith('a.')&&keys[1].startsWith('b.'));
+  const back=b64=>Buffer.from(b64.split('-').join('+').split('_').join('/'),'base64').toString('hex');
+  assert.equal(back(keys[0].slice(2)),tokenA);assert.equal(back(keys[1].slice(2)),tokenB);
+  assert.ok(link.length<400,'link stays short enough to share');
 });
 
 let failed=0;for(const[n,f]of tests){try{await f();console.log('PASS',n)}catch(e){failed++;console.error('FAIL',n,'\n ',e.message)}}
