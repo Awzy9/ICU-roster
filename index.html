@@ -27,4 +27,383 @@
       </div>
       <button id="generateBtn" class="btn primary" type="button">Auto-Generate</button>
       <button id="reoptimizeBtn" class="btn secondary" type="button" title="Try to satisfy new requests while changing as few existing assignments as possible">Re-optimize / Keep Current</button>
-      <button id="autoBalanceBtn" class="btn secondary" type="button" title="Rebalance unlocked assignments without changing daily coverage">Auto-Balance Unlock���q�^
+      <button id="autoBalanceBtn" class="btn secondary" type="button" title="Rebalance unlocked assignments without changing daily coverage">Auto-Balance Unlocked</button>
+      <button id="clearAllShiftsBtn" class="btn danger ghost" type="button" title="Clear every roster assignment in the current month">Clear All Shifts</button>
+      <button id="newMonthBtn" class="btn secondary" type="button">New Month Wizard</button>
+      <button id="auditBtn" class="btn secondary" type="button">Audit Roster</button>
+      <button id="printBtn" class="btn ghost" type="button">Print / Save PDF</button>
+      <button id="backupBtn" class="btn ghost" type="button">Download Backup</button>
+      <button id="restoreBtn" class="btn ghost" type="button">Restore Backup</button>
+      <input id="restoreInput" type="file" accept="application/json,.json" hidden />
+      <button id="resetBtn" class="btn danger ghost" type="button">Reset Sample Data</button>
+    </section>
+
+    <section id="newMonthWizard" class="form-card card hidden wizard-card">
+      <div class="section-head small">
+        <div><h2>New Month Wizard</h2><p class="muted">Create the next roster without re-entering names, pagers, eligibility, or rules. Choose who is active for that month; assignments start blank.</p></div>
+        <button id="closeNewMonthBtn" class="btn ghost" type="button">Close</button>
+      </div>
+      <div class="form-grid">
+        <div class="field"><label>New roster month</label><input id="wizardMonth" type="month" /></div>
+        <div class="field"><label>Starting point</label><select id="wizardMode"><option value="blank">Blank assignments, keep staff, pagers & rules</option></select></div>
+      </div>
+      <div class="wizard-staff-head"><strong>Active staff for the new month</strong><div class="inline-actions"><button id="wizardSelectAll" class="mini-btn" type="button">Select All</button><button id="wizardClearAll" class="mini-btn" type="button">Clear</button></div></div>
+      <div id="wizardStaffList" class="wizard-staff-list"></div>
+      <div class="inline-actions spaced"><button id="createMonthBtn" class="btn primary" type="button">Create Month</button><span class="muted">Leave/TRA and requests remain attached to their original dates automatically.</span></div>
+    </section>
+
+    <section class="stats-grid five">
+      <article class="stat card"><span>Coverage</span><strong id="coverageStat">—</strong><small id="coverageSub">—</small></article>
+      <article class="stat card"><span>Open Slots</span><strong id="openStat">—</strong><small>Must be 0 before publishing</small></article>
+      <article class="stat card"><span>Unit Continuity</span><strong id="continuityStat">—</strong><small id="continuitySub">Minimum block rule</small></article>
+      <article class="stat card"><span>Requests Met</span><strong id="requestStat">—</strong><small id="requestSub">Soft preferences</small></article>
+      <article class="stat card"><span>Distribution Fairness</span><strong id="fairnessStat">—</strong><small id="fairnessSub">Group-balanced totals, calls, and weekends</small></article>
+    </section>
+
+    <nav class="tabs" aria-label="Application sections">
+      <button class="tab active" data-tab="schedule" type="button">Roster</button>
+      <button class="tab" data-tab="staff" type="button">Staff</button>
+      <button class="tab" data-tab="coverage" type="button">Coverage Rules</button>
+      <button class="tab" data-tab="requests" type="button">Leave & Requests</button>
+      <button class="tab" data-tab="swaps" type="button">Swaps</button>
+      <button class="tab" data-tab="safety" type="button">Coverage & Safety</button>
+      <button class="tab" data-tab="rules" type="button">Fairness Rules</button>
+    </nav>
+
+    <main>
+      <section id="tab-schedule" class="tab-panel active">
+        <div class="schedule-head compact-head">
+          <div>
+            <h2>Official Monthly Roster</h2>
+            <p class="muted">Styled like the classic ICU coverage sheet. Click any cell to edit or lock it. <b>FD</b> marks a granted flexible free day, <b>LV</b> marks approved leave, and the far-right column shows each staff member's pager or phone number.</p>
+          </div>
+          <div class="inline-actions fix-day-controls">
+            <input id="fixDayDate" type="date" aria-label="Date to repair" />
+            <button id="fixDayBtn" class="btn secondary" type="button">Fix This Day</button>
+            <button id="unitBlockBtn" class="btn secondary" type="button">Assign 3–4 Day Unit Block</button>
+          </div>
+        </div>
+
+        <div id="unitBlockPanel" class="form-card card hidden unit-block-card">
+          <div class="section-head small">
+            <div><h3>Assign 3–4 Consecutive Days to One Unit</h3><p class="muted">Fast manual block assignment for required daytime units only. This tool cannot assign or overwrite MT, GR, KA, ER/CCRT overflow, or any other on-call/night duty. For any staff member, a block that would split Friday/Saturday is shifted to the nearest same-length weekend-safe block and shown in the preview before applying.</p></div>
+            <button id="closeUnitBlockBtn" class="btn ghost" type="button">Close</button>
+          </div>
+          <div class="form-grid unit-block-grid">
+            <div class="field"><label>Staff member</label><select id="unitBlockStaff"></select></div>
+            <div class="field"><label>Daytime unit</label><select id="unitBlockUnit"></select></div>
+            <div class="field"><label>Start date</label><input id="unitBlockStart" type="date" /></div>
+            <div class="field"><label>Consecutive days</label><select id="unitBlockLength"><option value="3">3 days</option><option value="4">4 days</option></select></div>
+          </div>
+          <label class="check"><input id="unitBlockLock" type="checkbox" /> Lock these cells after assignment</label>
+          <div id="unitBlockPreview" class="staff-sheet-tip">Choose staff, a daytime unit, start date, and 3 or 4 days.</div>
+          <div class="inline-actions"><button id="applyUnitBlockBtn" class="btn primary" type="button">Apply Unit Block</button></div>
+        </div>
+        <div class="official-roster card">
+          <div class="official-note">Daytime units are generated in continuous blocks. Mandatory units are covered first. PRU requires two residents every day. If the strict weekend cap makes full automatic coverage impossible, Auto-Generate leaves only the minimum weekend on-call slots OPEN for manual assignment. ER is added only after all mandatory slots are covered, then CCRT is added after ER.</div>
+          <div id="auditBanner" class="audit-banner hidden" role="status" aria-live="polite"></div>
+          <div class="official-header">
+            <div class="seal-wrap">
+              <img class="official-logo" src="kamc-acrm-logo.jpg" alt="Adult Critical Care Medicine Residency Program logo" />
+            </div>
+            <div class="official-titles">
+              <div class="title-1">ICU JUNIOR RESIDENTS - ROTATING FELLOWS &amp; RESIDENTS</div>
+              <div class="title-2">ICU COVERAGE</div>
+              <div id="officialMonth" class="month-title">September 2026</div>
+              <div class="month-controls" aria-label="Change roster month">
+                <button id="prevMonthBtn" class="month-nav-btn" type="button" aria-label="Previous month">‹</button>
+                <input id="officialMonthPicker" type="month" value="2026-09" aria-label="Roster month" />
+                <button id="nextMonthBtn" class="month-nav-btn" type="button" aria-label="Next month">›</button>
+              </div>
+              <div id="officialStatusBadge" class="official-status draft">Draft</div>
+            </div>
+            <div class="legend-panels">
+              <div class="legend-box">
+                <div class="legend-box-title">DAY SHIFT (08:00-16:00hrs)</div>
+                <div id="dayLegendTable" class="legend-grid"></div>
+              </div>
+              <div class="legend-box night">
+                <div class="legend-box-title">NIGHT SHIFT/ON DUTY (16:00-08:00hrs)</div>
+                <div id="nightLegendTable" class="legend-grid night"></div>
+              </div>
+            </div>
+          </div>
+          <div class="table-wrap official-table-wrap">
+            <table id="scheduleTable" class="schedule-table official"></table>
+          </div>
+        </div>
+        <div id="cellEditor" class="editor card hidden" aria-live="polite">
+          <div>
+            <strong id="editorTitle">Edit Assignment</strong>
+            <div id="editorMeta" class="muted"></div>
+          </div>
+          <div class="editor-controls">
+            <select id="editorShift"></select>
+            <label class="check"><input id="editorLock" type="checkbox" /> Lock</label>
+            <button id="saveCellBtn" class="btn primary" type="button">Save</button>
+            <button id="clearCellBtn" class="btn secondary" type="button">Clear</button>
+            <button id="closeEditorBtn" class="btn ghost" type="button">Close</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-staff" class="tab-panel">
+        <div class="section-head">
+          <div><h2>Staff</h2><p class="muted">Maintain the master staff list and choose who is active in the selected roster month. <b>Remove from Month</b> preserves historical rosters; <b>Delete Permanently</b> is the destructive master-list action.</p></div>
+          <div class="inline-actions">
+            <button id="staffSheetBtn" class="btn secondary" type="button">Staff Sheet Editor</button>
+            <button id="bulkStaffBtn" class="btn secondary" type="button">Quick Paste Staff</button>
+            <button id="removeSelectedStaffBtn" class="btn secondary" type="button" disabled>Remove Selected from Month (0)</button>
+            <button id="deleteSelectedStaffBtn" class="btn danger ghost" type="button" disabled>Delete Permanently Selected (0)</button>
+            <button id="addStaffBtn" class="btn primary" type="button">Add Staff Member</button>
+          </div>
+        </div>
+        <div class="table-wrap card"><table class="data-table" id="staffTable"></table></div>
+        <div id="staffSheetForm" class="form-card card hidden staff-sheet-card">
+          <div class="section-head small">
+            <div>
+              <h3>Staff Sheet Editor</h3>
+              <p class="muted">Edit many staff members like a spreadsheet. The fastest way to enter pager/phone numbers is to copy one column from Excel and paste it into the first <b>Pager / Phone</b> cell below. Multi-row tab-separated paste is supported.</p>
+            </div>
+            <div class="inline-actions">
+              <button id="sheetSelectAllBtn" class="btn ghost" type="button">Select All</button>
+              <button id="sheetClearSelectionBtn" class="btn ghost" type="button">Clear Selection</button>
+              <button id="sheetRemoveSelectedBtn" class="btn secondary" type="button" disabled>Remove Selected from Month (0)</button>
+              <button id="sheetDeleteSelectedBtn" class="btn danger ghost" type="button" disabled>Delete Permanently Selected (0)</button>
+              <button id="saveStaffSheetBtn" class="btn primary" type="button">Save Sheet Changes</button>
+              <button id="closeStaffSheetBtn" class="btn ghost" type="button">Close</button>
+            </div>
+          </div>
+          <div class="staff-sheet-tip"><b>Paste tip:</b> You can paste a single pager column downward, or copy rows with columns in this order: <b>Name | Level | Group | Pager/Phone | Max Credits</b>.</div>
+          <div class="table-wrap staff-sheet-wrap"><table class="data-table staff-sheet-table" id="staffSheetTable"></table></div>
+        </div>
+        <div id="bulkStaffForm" class="form-card card hidden bulk-staff-card">
+          <div class="section-head small">
+            <div>
+              <h3>Quick Paste Staff</h3>
+              <p class="muted">Paste many names at once. One person per line. You can paste <b>Name only</b>, <b>Name + pager/phone</b>, or tab/comma-separated columns. The importer can detect R1, R2, Fellow, ER, IM, and GS labels automatically.</p>
+            </div>
+          </div>
+          <div class="bulk-staff-grid">
+            <div class="field bulk-text-field">
+              <label for="bulkStaffText">Paste staff list</label>
+              <textarea id="bulkStaffText" rows="10" placeholder="Ali Alsuhaibani R2    1460
+Nourah Al Turaif R2    1498
+Saud AlDayel ER    0555966862
+
+Tip: tabs, commas, or multiple spaces are accepted."></textarea>
+              <small class="muted">Examples: <b>Ali Alsuhaibani R2 [TAB] 1460</b> or simply <b>Ali Alsuhaibani</b>.</small>
+            </div>
+            <div class="bulk-defaults">
+              <div class="field"><label>Default Level</label><select id="bulkStaffLevel"><option>R1</option><option selected>R2</option><option>Fellow</option><option>Rotator</option></select></div>
+              <div class="field"><label>Default Group</label><input id="bulkStaffGroup" type="text" value="ICU Residents" placeholder="ICU Residents / ER Rotators..." /></div>
+              <div class="field"><label>Maximum Shift Credits / Month</label><input id="bulkStaffMax" type="number" min="1" max="31" value="18" /></div>
+              <label class="check bulk-check"><input id="bulkAutoDetect" type="checkbox" checked /> Auto-detect R1 / R2 / Fellow / ER / IM / GS from each line</label>
+              <label class="check bulk-check"><input id="bulkSkipDuplicates" type="checkbox" checked /> Skip names already in Staff</label>
+            </div>
+          </div>
+          <div id="bulkStaffPreview" class="bulk-preview muted">Paste names above to see how they will be interpreted.</div>
+          <div class="inline-actions">
+            <button id="importBulkStaffBtn" class="btn primary" type="button">Add Pasted Staff</button>
+            <button id="clearBulkStaffBtn" class="btn secondary" type="button">Clear</button>
+            <button id="cancelBulkStaffBtn" class="btn ghost" type="button">Close</button>
+          </div>
+        </div>
+        <div id="staffForm" class="form-card card hidden">
+          <h3 id="staffFormTitle">Add Staff Member</h3>
+          <div class="form-grid">
+            <div class="field"><label>Name</label><input id="staffName" type="text" /></div>
+            <div class="field"><label>Level</label><select id="staffLevel"><option>R1</option><option>R2</option><option>Fellow</option><option>Rotator</option></select></div>
+            <div class="field"><label>Group</label><input id="staffGroup" type="text" placeholder="Residents / ER / IM..." /></div>
+            <div class="field"><label>Maximum Shift Credits / Month</label><input id="staffMax" type="number" min="1" max="31" value="16" /></div>
+            <div class="field"><label>Pager / Phone</label><input id="staffPager" type="text" placeholder="1460 or 05xxxxxxxx" /></div>
+            <label class="check"><input id="staffActiveMonth" type="checkbox" checked /> Active in selected roster month</label>
+          </div>
+          <div class="field">
+            <div class="eligibility-heading">
+              <label>Eligible Unit / Shift Codes</label>
+              <label class="eligible-select-all"><input id="staffEligibleAll" type="checkbox" /> Select all</label>
+            </div>
+            <div id="staffEligible" class="chips"></div>
+          </div>
+          <div class="inline-actions"><button id="saveStaffBtn" class="btn primary" type="button">Save</button><button id="cancelStaffBtn" class="btn ghost" type="button">Cancel</button></div>
+        </div>
+      </section>
+
+      <section id="tab-coverage" class="tab-panel">
+        <div class="section-head">
+          <div><h2>Daily Coverage Rules</h2><p class="muted">Required units are covered first. PRU requires two residents every day. After all mandatory coverage is complete, spare capacity is assigned to ER first and then CCRT. Day units can enforce continuous rotation blocks.</p></div>
+          <button id="addShiftBtn" class="btn primary" type="button">Add Unit / Shift</button>
+        </div>
+        <div class="table-wrap card"><table class="data-table" id="shiftTable"></table></div>
+        <div id="shiftForm" class="form-card card hidden">
+          <h3 id="shiftFormTitle">Add Unit / Shift</h3>
+          <div class="form-grid">
+            <div class="field"><label>Code</label><input id="shiftCode" type="text" maxlength="8" /></div>
+            <div class="field"><label>Name</label><input id="shiftName" type="text" /></div>
+            <div class="field"><label>Type</label><select id="shiftType"><option value="day">Day unit</option><option value="night">Night shift</option></select></div>
+            <div class="field"><label>Required on Weekdays</label><input id="shiftWeekday" type="number" min="0" max="10" value="1" /></div>
+            <div class="field"><label>Required on Weekends</label><input id="shiftWeekend" type="number" min="0" max="10" value="1" /></div>
+            <label class="field checkbox-field"><span>Use unit-continuity blocks</span><input id="shiftContinuity" type="checkbox" checked /></label>
+          </div>
+          <div class="inline-actions"><button id="saveShiftBtn" class="btn primary" type="button">Save</button><button id="cancelShiftBtn" class="btn ghost" type="button">Cancel</button></div>
+        </div>
+      </section>
+
+      <section id="tab-requests" class="tab-panel">
+        <div class="request-portal card form-card always">
+          <div class="section-head small">
+            <div>
+              <h2>Secure Staff Request Links</h2>
+              <p class="muted">Each staff member gets a <b>personal request link</b> for flexible free days and swaps. No staff login is required, but the personal token prevents someone from simply selecting another person's name.</p>
+            </div>
+            <div class="inline-actions">
+              <button id="syncPortalBtn" class="btn primary" type="button">Create / Sync Portal</button>
+              <button id="refreshRemoteRequestsBtn" class="btn secondary" type="button">Refresh Requests</button>
+              <button id="regenerateStaffLinksBtn" class="btn ghost" type="button">Regenerate Personal Links</button>
+              <button id="deactivatePortalBtn" class="btn danger ghost" type="button">Deactivate Portal</button>
+            </div>
+          </div>
+          <div class="portal-personal-grid">
+            <div class="field"><label>Staff Member</label><select id="portalStaffSelect"></select></div>
+            <div class="field portal-link-field"><label>Personal Request Link</label><div class="portal-link-row"><input id="staffRequestLink" type="text" readonly placeholder="Create/sync the portal first" /><button id="copyRequestLinkBtn" class="btn ghost" type="button">Copy Personal Link</button></div></div>
+          </div>
+          <div id="portalStatus" class="muted portal-status">Not synced yet.</div>
+          <div class="table-wrap spaced"><table class="data-table" id="remoteRequestsTable"></table></div>
+        </div>
+        <div class="three-col">
+          <div class="card form-card always">
+            <h2>Leave</h2>
+            <p class="muted">Approved leave is a hard unavailable period. Pending leave does not block scheduling until approved.</p>
+            <div class="field"><label>Staff Member</label><select id="leavePerson"></select></div>
+            <div class="form-grid two">
+              <div class="field"><label>From</label><input id="leaveFrom" type="date" /></div>
+              <div class="field"><label>To</label><input id="leaveTo" type="date" /></div>
+            </div>
+            <div class="field"><label>Status</label><select id="leaveStatus"><option value="approved">Approved</option><option value="pending">Pending Approval</option></select></div>
+            <button id="addLeaveBtn" class="btn primary" type="button">Add Leave</button>
+          </div>
+
+          <div class="card form-card always">
+            <h2>Exact Day / Shift Request</h2>
+            <p class="muted">These are strong preferences, not leave. Coverage and hard safety rules remain higher priority.</p>
+            <div class="field"><label>Staff Member</label><select id="requestPerson"></select></div>
+            <div class="form-grid two">
+              <div class="field"><label>Date</label><input id="requestDate" type="date" /></div>
+              <div class="field"><label>Request Type</label><select id="requestType"><option value="off">Prefer this day free</option><option value="prefer">Prefer a specific shift</option><option value="avoid">Prefer to avoid a specific shift</option></select></div>
+            </div>
+            <div class="field"><label>Shift</label><select id="requestShift"></select></div>
+            <button id="addRequestBtn" class="btn primary" type="button">Add Request</button>
+          </div>
+
+          <div class="card form-card always emphasis-card">
+            <h2>Flexible Free Days</h2>
+            <p class="muted">Use this when someone wants free days but does not need fixed dates. The planner chooses the best dates around the roster.</p>
+            <div class="field"><label>Staff Member</label><select id="freePerson"></select></div>
+            <div class="form-grid two">
+              <div class="field"><label>Number of Free Days</label><input id="freeDays" type="number" min="1" max="10" value="3" /></div>
+              <label class="field checkbox-field"><span>Consecutive free days</span><input id="freeConsecutive" type="checkbox" checked /></label>
+              <div class="field"><label>Earliest Date</label><input id="freeFrom" type="date" /></div>
+              <div class="field"><label>Latest Date</label><input id="freeTo" type="date" /></div>
+            </div>
+            <button id="addFreeRequestBtn" class="btn primary" type="button">Add Flexible Request</button>
+          </div>
+        </div>
+
+        <div class="table-wrap card spaced"><table class="data-table" id="leaveTable"></table></div>
+        <div class="table-wrap card spaced"><table class="data-table" id="requestTable"></table></div>
+        <div class="table-wrap card spaced"><table class="data-table" id="freeRequestTable"></table></div>
+      </section>
+
+      <section id="tab-swaps" class="tab-panel">
+        <div class="section-head"><div><h2>Shift Swaps</h2><p class="muted">Create a proposed staff-to-staff swap. The planner validates eligibility, leave, protected post-call days, coverage, monthly assignment/on-call limits, and the unit-continuity rule before approval.</p></div></div>
+        <div class="swap-builder card form-card always">
+          <div class="swap-side">
+            <h3>Staff A</h3>
+            <div class="field"><label>Staff Member</label><select id="swapPersonA"></select></div>
+            <div class="field"><label>Assignment Date</label><input id="swapDateA" type="date" /></div>
+            <div id="swapCurrentA" class="assignment-preview">Select a person and date</div>
+          </div>
+          <div class="swap-arrow" aria-hidden="true">⇄</div>
+          <div class="swap-side">
+            <h3>Staff B</h3>
+            <div class="field"><label>Staff Member</label><select id="swapPersonB"></select></div>
+            <div class="field"><label>Assignment Date</label><input id="swapDateB" type="date" /></div>
+            <div id="swapCurrentB" class="assignment-preview">Select a person and date</div>
+          </div>
+          <div class="swap-action"><button id="addSwapBtn" class="btn primary" type="button">Create Swap Request</button></div>
+        </div>
+        <div class="table-wrap card spaced"><table class="data-table" id="swapTable"></table></div>
+      </section>
+
+      <section id="tab-safety" class="tab-panel">
+        <div class="section-head"><div><h2>Coverage & Safety</h2><p class="muted">Daily coverage status, publish gate, soft-request review, and local activity history.</p></div></div>
+        <div id="safetyChecklist" class="safety-grid"></div>
+        <div class="table-wrap card spaced"><table class="data-table" id="coverageTable"></table></div>
+        <div class="section-head small"><div><h3>Activity Log</h3><p class="muted">Stored only in this browser.</p></div><button id="clearLogBtn" class="btn ghost" type="button">Clear Log</button></div>
+        <div class="table-wrap card"><table class="data-table" id="activityTable"></table></div>
+      </section>
+
+      <section id="tab-counter" class="tab-panel">
+        <div class="section-head">
+          <div>
+            <h2>Shift Counter &amp; TRA / Leave Calculator</h2>
+            <p class="muted">Based on your current roster sheet: morning/day duty = 1 shift credit and on-call/night duty = 2 shift credits. The adjusted shift target is prorated for TRA/leave days.</p>
+          </div>
+        </div>
+        <div class="counter-layout">
+          <div class="card form-card always calculator-card">
+            <h3>TRA / Leave Shift Calculator</h3>
+            <p class="muted">Formula from your sheet: <b>Adjusted shifts = ROUND(Average shifts − (Average shifts ÷ Month/block days × TRA/leave days))</b>.</p>
+            <div class="form-grid two">
+              <div class="field"><label>Month / Block Days</label><input id="calcMonthDays" type="number" min="1" max="62" value="30" /></div>
+              <div class="field"><label>Average / Required Shifts</label><input id="calcAverageShifts" type="number" min="0" max="40" value="20" /></div>
+              <div class="field"><label>TRA / Leave Days</label><input id="calcLeaveDays" type="number" min="0" max="62" value="0" /></div>
+              <div class="calculator-result"><span>Quoted shifts after TRA / leave</span><strong id="calcResult">20</strong></div>
+            </div>
+            <div class="inline-actions spaced-small">
+              <button id="calcUseCurrentMonthBtn" class="btn secondary" type="button">Use Current Month Days</button>
+              <button id="calcSetCounterBaseBtn" class="btn ghost" type="button">Use Average as Counter Base</button>
+            </div>
+          </div>
+          <div class="card form-card always counter-summary-card">
+            <h3>Counter Settings</h3>
+            <p class="muted">The counter below automatically uses approved leave days that overlap the displayed month.</p>
+            <div class="field"><label>Base Required Shift Credits</label><input id="counterBaseShifts" type="number" min="0" max="40" value="20" /></div>
+            <div class="counter-formula-note">Adjusted target = base target prorated by approved leave days in the current month.</div>
+          </div>
+        </div>
+        <div class="table-wrap card spaced"><table class="data-table" id="shiftCounterTable"></table></div>
+      </section>
+
+      <section id="tab-rules" class="tab-panel">
+        <div class="rules-grid">
+          <label class="rule card"><span>Minimum Continuous Days in Same Day Unit</span><input id="ruleMinUnitBlock" type="number" min="1" max="7" /></label>
+          <label class="rule card"><span>Maximum Consecutive Working Days</span><input id="ruleConsecutive" type="number" min="1" max="12" /></label>
+          <label class="rule card"><span>Maximum Shift Credits / Person / Month (Day = 1, On-call = 2)</span><input id="ruleMaxAssignments" type="number" min="1" max="31" /></label>
+          <label class="rule card"><span>Maximum On-Calls / Person / Month</span><input id="ruleMaxNightCalls" type="number" min="1" max="15" /></label>
+          <label class="rule card"><span>Minimum Calendar-Day Spacing Between On-Calls</span><input id="ruleMinNightGapDays" type="number" min="3" max="14" /></label>
+          <label class="rule card"><span>Protect Full Post-Call Day (no assignment after on-call)</span><input id="ruleNightRest" type="checkbox" /></label>
+          <label class="rule card"><span>Acceptable Shift-Credit Difference</span><input id="ruleFairGap" type="number" min="0" max="10" /></label>
+          <label class="rule card"><span>Saudi Weekend (Friday / Saturday)</span><input id="ruleSaudiWeekend" type="checkbox" /></label>
+          <div class="rule card fixed-rule"><span>All-Staff Weekend Maximum</span><strong id="weekendCapSummary">Calculated from the selected month</strong></div>
+          <div class="rule card fixed-rule"><span>Weekend Duty Package</span><strong id="weekendPackageSummary">1 weekend on-call OR both weekend day shifts</strong></div>
+          <div class="rule card fixed-rule"><span>On-call Weight</span><strong>2 shift credits</strong></div>
+        </div>
+        <div class="card note">
+          <h3>Scheduling priorities</h3>
+          <p><b>Hard rules:</b> every required slot should be covered; PRU has two required residents every day; approved leave blocks assignment; one assignment per person per day; eligibility, the full post-call calendar day is protected after each on-call, shift-credit caps, monthly on-call caps, consecutive-day limits, locked assignments, ≥3-calendar-day on-call spacing, daytime unit-continuity blocks, and all-staff weekend limits are protected.</p>
+          <p class="muted"><b>Shift-credit logic:</b> a daytime assignment counts as <b>1 shift credit</b>; an on-call/night assignment counts as <b>2 shift credits</b>. Each person's effective monthly credit maximum is the lower of the global rule and that person's individual maximum in Staff.</p>
+          <p class="muted"><b>Weekend logic for all staff:</b> when the selected month contains 4 weekends, every active staff member may cover at most <b>2 weekends</b>; when it contains 5 weekends, the maximum is <b>3 weekends</b>. A weekend package is either <b>one weekend on-call</b> or <b>both weekend day shifts</b> (Friday + Saturday in Saudi weekend mode). If automatic weekend capacity is short, only the minimum unavoidable weekend on-call slots are left open for manual completion.</p>
+          <p><b>Soft goals:</b> after mandatory coverage is safe, assign extra capacity to ER first and then CCRT; honor requested free days and shift preferences; balance shift credits, on-calls, Fridays/Saturdays, and distinct weekends; and keep re-optimization changes to a minimum.</p>
+        </div>
+        <div class="section-head small"><div><h3>Monthly Fairness</h3><p class="muted">Use this table to identify uneven shift credits, on-calls, and weekend burden.</p></div></div>
+        <div class="table-wrap card"><table class="data-table" id="fairnessTable"></table></div>
+      </section>
+    </main>
+
+    <footer class="footer">Roster planner with local browser storage plus a Supabase-backed personal staff-request portal. Staff do not need accounts; each request link is individually token-protected. Use Download Backup regularly (it excludes staff-request tokens but still contains confidential roster data) and Print / Save PDF for an official copy.</footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

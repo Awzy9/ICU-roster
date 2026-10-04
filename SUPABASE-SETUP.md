@@ -12,4 +12,4 @@ A source copy of the deployed solver is packaged at `supabase/functions/icu-rost
 
 ## Staff lifecycle portal behavior
 
-No new table or RPC is required for v10.8.2 staff lifecycle changes. The existing `icu_roster_sync_portal` RPC treats the submitted active staff list as authoritative and marks staff-access rows absent from that list as inactive. The frontend removes cached tokens for staff removed from a month and syncs the portal immediately; permanent deleti¶»§q«^
+No new table or RPC is required for v10.8.2 staff lifecycle changes. The existing `icu_roster_sync_portal` RPC treats the submitted active staff list as authoritative and marks staff-access rows absent from that list as inactive. The frontend removes cached tokens for staff removed from a month and syncs the portal immediately; permanent deletion also attempts to resync known saved-month portals.

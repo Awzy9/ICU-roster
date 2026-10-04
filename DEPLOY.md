@@ -18,4 +18,9 @@ The connected Supabase project already has v5 deployed. A copy of the deployed s
 ## After deployment
 Hard-refresh the browser so older cached JavaScript/worker code is not reused. Existing browser-stored rosters remain intact. Run **Audit Roster** before publishing any carried-forward month.
 
-Expected v10.8.2 behavior: all active staff obey the weekend cap; on-calls are at least 3 calendar days apart; weekday coverage remains mandatory; if the weekend cap is mathematically short, only the minimum weekend on-call slots are intentionally left open for manual completion and Publish remains blocked until fille¶»§q«^
+Expected v10.8.2 behavior: all active staff obey the weekend cap; on-calls are at least 3 calendar days apart; weekday coverage remains mandatory; if the weekend cap is mathematically short, only the minimum weekend on-call slots are intentionally left open for manual completion and Publish remains blocked until filled.
+
+
+## Staff lifecycle
+
+Staff added later must not appear in old months. Use **Remove from Month** for normal rotation changes; it preserves historical rosters. **Delete Permanently** is intentionally destructive across all saved months. After staff membership changes, an existing personal-request portal is resynced immediately so absent staff are deactivated by `icu_roster_sync_portal`.
