@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ICU Roster Planner</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">ICU ROSTER PLANNER</div>
+        <h1>ICU Duty Roster Planner</h1>
+        <p class="muted">Coverage-first scheduling with unit continuity, two-resident PRU coverage, prioritized ER/CCRT overflow coverage, leave, flexible free-day requests, swaps, fairness, and safety auditing.</p>
+      </div>
+      <div class="header-actions">
+        <span id="publishBadge" class="badge draft">Draft</span>
+        <button id="publishBtn" class="btn secondary" type="button">Publish Final Roster</button>
+      </div>
+    </header>
+
+    <section class="toolbar card">
+      <div class="field compact">
+        <label for="monthPicker">Month</label>
+        <input id="monthPicker" type="month" value="2026-09" />
+      </div>
+      <button id="generateBtn" class="btn primary" type="button">Auto-Generate</button>
+      <button id="reoptimizeBtn" class="btn secondary" type="button" title="Try to satisfy new requests while changing as few existing assignments as possible">Re-optimize / Keep Current</button>
+      <button id="autoBalanceBtn" class="btn secondary" type="button" title="Rebalance unlocked assignments without changing daily coverage">Auto-Balance Unlock¶»§q«^
