@@ -1197,7 +1197,7 @@ async function supabaseRpc(name,args){
   if(!r.ok)throw new Error(data?.message||data?.error||data?.hint||`Request failed (${r.status})`);return data;
 }
 function portalBaseUrl(){if(location.protocol==='http:'||location.protocol==='https:')return location.href.replace(/[^/?#]+(?:[?#].*)?$/,'');return '';}
-function portalPersonalLink(staffId){const rp=state.remotePortal,token=rp?.staffTokens?.[staffId];if(!rp?.portalId||!token||!staffId)return'';const q=`portal=${encodeURIComponent(rp.portalId)}&staff=${encodeURIComponent(staffId)}&token=${encodeURIComponent(token)}`;const base=portalBaseUrl();return base?`${base}request.html?${q}`:`request.html?${q}`;}
+function portalPersonalLink(staffId){const rp=state.remotePortal,token=rp?.staffTokens?.[staffId];if(!rp?.portalId||!token||!staffId)return'';const q=`portal=${encodeURIComponent(rp.portalId)}&staff=${encodeURIComponent(staffId)}&token=${encodeURIComponent(token)}`;const base=portalBaseUrl();return base?`${base}request.html#${q}`:`request.html#${q}`;}
 function portalLink(){return portalPersonalLink($('#portalStaffSelect')?.value||activeStaff()[0]?.id||'');}
 function portalAssignmentPayload(){const out={};for(const p of activeStaff())for(const d of monthDates()){const v=assigned(p.id,d);if(v)out[key(p.id,d)]=v;}return out;}
 async function syncStaffPortal(showStatus=true,active=true){

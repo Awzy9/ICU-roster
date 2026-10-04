@@ -15,7 +15,7 @@ function isoDates(month:string){if(!/^\d{4}-\d{2}$/.test(month))throw new Error(
 const dateObj=(d:string)=>new Date(d+"T00:00:00Z");
 function splitRuns(idxs:number[]){const runs:number[][]=[];let cur:number[]=[];for(const i of idxs){if(!cur.length||i===cur[cur.length-1]+1)cur.push(i);else{runs.push(cur);cur=[i];}}if(cur.length)runs.push(cur);return runs;}
 
-Deno.serve(async(req:Request)=>{
+const handle=async(req:Request)=>{
   if(req.method==="OPTIONS")return new Response("ok",{headers:cors});
   if(req.method!=="POST")return json({error:"POST required"},405);
   try{
@@ -111,4 +111,15 @@ Deno.serve(async(req:Request)=>{
     const intendedCounts=new Map<string,number>();for(const x of intentionalOpen){const k=x.date+'|'+x.shift;intendedCounts.set(k,(intendedCounts.get(k)||0)+1);}for(const x of open){const k=x.date+'|'+x.shift,n=intendedCounts.get(k)||0;if(n<1)return json({ok:false,infeasible:true,message:"Solver returned an unexpected non-manual coverage gap",open,intentionalOpen,elapsedMs});intendedCounts.set(k,n-1);}
     return json({ok:true,assignments,intentionalOpen,elapsedMs,objective:result.result,totalMandatoryCredits,estimatedIntegerVariables,weekendCap,source:"server-v5"});
   }catch(e){return json({ok:false,error:e instanceof Error?e.message:String(e)},400);}
+};
+
+// Set ALLOWED_ORIGINS (comma-separated, e.g. https://roster.example.com) to restrict browser callers.
+// When unset the function keeps the previous open CORS behaviour.
+const ALLOWED_ORIGINS=(Deno.env.get("ALLOWED_ORIGINS")||"").split(",").map(s=>s.trim()).filter(Boolean);
+Deno.serve(async(req:Request)=>{
+  const origin=req.headers.get("origin")||"";
+  if(ALLOWED_ORIGINS.length&&origin&&!ALLOWED_ORIGINS.includes(origin))return new Response(JSON.stringify({error:"Origin not allowed"}),{status:403,headers:{"Content-Type":"application/json"}});
+  const res=await handle(req);
+  if(ALLOWED_ORIGINS.length){res.headers.set("Access-Control-Allow-Origin",origin||ALLOWED_ORIGINS[0]);res.headers.set("Vary","Origin");}
+  return res;
 });
