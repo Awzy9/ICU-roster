@@ -24,6 +24,8 @@
       <div class="identity"><div><span class="muted">Requesting as</span><strong id="staffName">—</strong></div><span id="monthName" class="muted"></span></div>
       <div class="tabs">
         <button class="tab active" data-panel="flex" type="button">Flexible Free Days</button>
+        <button class="tab" data-panel="day" type="button">Day Off / Preference</button>
+        <button class="tab" data-panel="leave" type="button">Leave</button>
         <button class="tab" data-panel="swap" type="button">Shift Swap</button>
       </div>
       <section id="panel-flex" class="panel active">
@@ -35,6 +37,24 @@
         </div>
         <label class="check"><input id="freeConsecutive" type="checkbox" /> Consecutive free days</label>
         <button id="submitFlex" class="btn" type="button">Submit Flexible-Day Request</button>
+      </section>
+      <section id="panel-day" class="panel">
+        <p class="muted">Ask for one date off, or to prefer / avoid a unit on one date. This is a request; the coordinator reviews it before anything changes.</p>
+        <div class="grid">
+          <div class="field"><label>Date</label><input id="dayDate" type="date" /></div>
+          <div class="field"><label>Request</label><select id="dayType"><option value="off">Day off</option><option value="prefer">Prefer a unit</option><option value="avoid">Avoid a unit</option></select></div>
+          <div class="field" id="dayShiftField" hidden><label>Unit</label><select id="dayShift"></select></div>
+        </div>
+        <button id="submitDay" class="btn" type="button">Submit Request</button>
+      </section>
+      <section id="panel-leave" class="panel">
+        <p class="muted">Request leave (annual, sick, course…). If the coordinator approves it, the roster is re-optimized around your leave.</p>
+        <div class="grid">
+          <div class="field"><label>From</label><input id="leaveFrom" type="date" /></div>
+          <div class="field"><label>To</label><input id="leaveTo" type="date" /></div>
+          <div class="field"><label>Reason (optional)</label><input id="leaveNote" type="text" maxlength="120" /></div>
+        </div>
+        <button id="submitLeave" class="btn" type="button">Submit Leave Request</button>
       </section>
       <section id="panel-swap" class="panel">
         <p class="muted">Choose one of your assigned dates and the colleague/date you want to swap with. The coordinator will see a validated request before approving it.</p>

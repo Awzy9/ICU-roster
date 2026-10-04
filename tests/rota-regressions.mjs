@@ -27,7 +27,7 @@ function loadApp(overrides={}){
     purgeStaffIds:typeof purgeStaffIds==='function'?purgeStaffIds:undefined,
     weekendCapacityAnalysis:typeof weekendCapacityAnalysis==='function'?weekendCapacityAnalysis:undefined,
     buildSolverPayload:typeof buildSolverPayload==='function'?buildSolverPayload:undefined,
-    assignMaxCoverage,buildFlexPlan,hasExplicitMax,maxCount,monthStartContinuityLocks,buildWorkbookSheets,portalPublicLink,hexToBase64Url
+    remoteRequestSummary,remoteRequestLabel,remoteRequestBadge,isExtraRequest,assignMaxCoverage,buildFlexPlan,hasExplicitMax,maxCount,monthStartContinuityLocks,buildWorkbookSheets,portalPublicLink,hexToBase64Url
   };
 })();`);
   const sandbox={console,setTimeout,clearTimeout,TextEncoder,TextDecoder,URL,Blob,crypto:globalThis.crypto,
@@ -245,6 +245,16 @@ test('public links carry compact tokens for every active staff member and the ri
   const back=b64=>Buffer.from(b64.split('-').join('+').split('_').join('/'),'base64').toString('hex');
   assert.equal(back(keys[0].slice(2)),tokenA);assert.equal(back(keys[1].slice(2)),tokenB);
   assert.ok(link.length<400,'link stays short enough to share');
+});
+
+test('leave and day-off requests from the request page are summarised and routed to the extra-request RPCs',()=>{
+  const api=loadApp();const s=fixtureState(api,{staff:[person('a')],shifts:[{id:'sA',code:'A',name:'Unit A',type:'day',weekday:1,weekend:1,continuity:false}]});api.setState(s);
+  assert.equal(api.remoteRequestSummary({request_type:'leave',payload:{from:'2026-09-03',to:'2026-09-05',note:'course'}}),'Leave 2026-09-03 → 2026-09-05 · course');
+  assert.equal(api.remoteRequestSummary({request_type:'day_request',payload:{type:'off',date:'2026-09-07'}}),'Day off on 2026-09-07');
+  assert.equal(api.remoteRequestSummary({request_type:'day_request',payload:{type:'prefer',date:'2026-09-08',shift:'sA'}}),'Prefers A on 2026-09-08');
+  assert.equal(api.remoteRequestSummary({request_type:'day_request',payload:{type:'avoid',date:'2026-09-09',shift:'sA'}}),'Wants to avoid A on 2026-09-09');
+  assert.equal(api.isExtraRequest({request_type:'leave'}),true);assert.equal(api.isExtraRequest({request_type:'swap'}),false);assert.equal(api.isExtraRequest({request_type:'flex_days'}),false);
+  assert.equal(api.remoteRequestBadge('leave'),'Leave');assert.equal(api.remoteRequestLabel('day_request'),'day-off / preference');
 });
 
 let failed=0;for(const[n,f]of tests){try{await f();console.log('PASS',n)}catch(e){failed++;console.error('FAIL',n,'\n ',e.message)}}

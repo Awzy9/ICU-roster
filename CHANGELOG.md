@@ -1,5 +1,6 @@
 # Unreleased
 
+- **Day-off / preference and leave requests** on the request page (public and personal links). They are stored by new Supabase functions: run `supabase/migrations/20261004_icu_roster_extra_requests.sql` once in the Supabase SQL editor. Until then those two tabs show "not enabled yet". Approving a request re-optimizes the roster (with a preview) before applying it.
 - Added **R3** as a staff level (senior resident: eligible for all units, grouped with ICU Residents).
 - Units now have an optional **maximum** per weekday/weekend next to the minimum (required) count. Required coverage is solved first; extra staff are then added up to the maximum using spare capacity, in full continuity blocks. Over-maximum coverage is flagged by the audit.
 - **Month-boundary continuity:** staff who finish the previous month on a unit keep it into the first days of the new month until their block reaches the minimum unit block (rule can be turned off). If the locks make the roster infeasible, generation retries without them and says so.

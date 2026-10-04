@@ -1339,11 +1339,19 @@ async function regenerateStaffLinks(){if(!confirm('Regenerate every personal sta
 async function deactivateStaffPortal(){if(!state.remotePortal?.portalId)return alert('No staff request portal exists for this month.');if(!confirm('Deactivate this month\'s staff request portal? Existing personal links will stop accepting requests until you reactivate/sync it.'))return;const ok=await syncStaffPortal(true,false);if(ok){logAction('Deactivated staff request portal',formatMonthLabel(state.month));renderPortalStatus();}}
 async function refreshRemoteRequests(){
   if(!state.remotePortal?.portalId){remoteRequests=[];renderRemoteRequests();return;}
-  try{const data=await supabaseRpc('icu_roster_list_requests',{p_portal_id:state.remotePortal.portalId,p_admin_token:state.remotePortal.adminToken});remoteRequests=Array.isArray(data.requests)?data.requests:[];renderRemoteRequests();renderPortalStatus();}
+  try{const data=await supabaseRpc('icu_roster_list_requests',{p_portal_id:state.remotePortal.portalId,p_admin_token:state.remotePortal.adminToken});remoteRequests=Array.isArray(data.requests)?data.requests:[];try{const extra=await supabaseRpc('icu_roster_list_extra_requests',{p_portal_id:state.remotePortal.portalId,p_admin_token:state.remotePortal.adminToken});if(Array.isArray(extra.requests))remoteRequests=[...remoteRequests,...extra.requests].sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));}catch(extraError){/* migration not applied yet: leave and day-off requests are simply unavailable */}renderRemoteRequests();renderPortalStatus();}
   catch(e){const el=$('#portalStatus');if(el){el.textContent=`Could not refresh staff requests: ${e.message}`;el.className='portal-status bad';}}
 }
+const EXTRA_REQUEST_KINDS=['leave','day_request'];
+function isExtraRequest(r){return EXTRA_REQUEST_KINDS.includes(r?.request_type);}
+function remoteRequestLabel(type){return type==='swap'?'swap':type==='leave'?'leave':type==='day_request'?'day-off / preference':'flexible-day';}
+function remoteRequestBadge(type){return type==='swap'?'Swap':type==='leave'?'Leave':type==='day_request'?'Day off / preference':'Flexible days';}
+// Leave and day-off/preference requests live in icu_roster_extra_requests (see supabase/migrations).
+async function setRemoteStatus(r,status,note){return supabaseRpc(isExtraRequest(r)?'icu_roster_set_extra_request_status':'icu_roster_set_request_status',{p_portal_id:state.remotePortal.portalId,p_admin_token:state.remotePortal.adminToken,p_request_id:r.id,p_status:status,p_admin_note:note});}
 function remoteRequestSummary(r){
   const p=r.payload||{};
+  if(r.request_type==='leave')return `Leave ${p.from||'—'} → ${p.to||'—'}${p.note?' · '+p.note:''}`;
+  if(r.request_type==='day_request'){const code=shiftById(p.shift)?.code||p.shift||'';return p.type==='prefer'?`Prefers ${code} on ${p.date||'—'}`:p.type==='avoid'?`Wants to avoid ${code} on ${p.date||'—'}`:`Day off on ${p.date||'—'}`;}
   if(r.request_type==='flex_days')return `${p.days||1} free day${Number(p.days||1)===1?'':'s'} · ${p.from||'—'} → ${p.to||'—'}${p.consecutive?' · consecutive':''}`;
   return `${p.dateA||'—'} (${r.staff_name}) ⇄ ${p.dateB||'—'} (${p.personBName||personById(p.personB)?.name||'staff'})`;
 }
@@ -1352,7 +1360,7 @@ function renderRemoteRequests(){
   const t=$('#remoteRequestsTable');if(!t)return;
   let h='<thead><tr><th>Staff</th><th>Type</th><th>Request</th><th>Submitted</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
   if(!remoteRequests.length)h+='<tr><td colspan="6" class="empty">No staff requests received yet.</td></tr>';
-  else for(const r of remoteRequests){const pending=r.status==='pending',busy=remoteRequestBusy===r.id;h+=`<tr><td><b>${esc(r.staff_name)}</b></td><td><span class="remote-badge ${r.request_type==='swap'?'swap':'flex'}">${r.request_type==='swap'?'Swap':'Flexible days'}</span></td><td class="remote-request-summary">${esc(remoteRequestSummary(r))}</td><td>${esc(new Date(r.created_at).toLocaleString())}</td><td><span class="status-pill ${r.status==='approved'?'ok':r.status==='rejected'?'bad':'warn'}">${esc(r.status)}</span></td><td>${pending?`<button class="mini-btn good remote-approve" data-id="${r.id}" ${busy?'disabled':''}>${busy?'Processing…':'Review & Apply'}</button><button class="mini-btn danger remote-reject" data-id="${r.id}" ${busy?'disabled':''}>Reject</button>`:'—'}</td></tr>`;}
+  else for(const r of remoteRequests){const pending=r.status==='pending',busy=remoteRequestBusy===r.id;h+=`<tr><td><b>${esc(r.staff_name)}</b></td><td><span class="remote-badge ${r.request_type==='swap'?'swap':'flex'}">${esc(remoteRequestBadge(r.request_type))}</span></td><td class="remote-request-summary">${esc(remoteRequestSummary(r))}</td><td>${esc(new Date(r.created_at).toLocaleString())}</td><td><span class="status-pill ${r.status==='approved'?'ok':r.status==='rejected'?'bad':'warn'}">${esc(r.status)}</span></td><td>${pending?`<button class="mini-btn good remote-approve" data-id="${r.id}" ${busy?'disabled':''}>${busy?'Processing…':'Review & Apply'}</button><button class="mini-btn danger remote-reject" data-id="${r.id}" ${busy?'disabled':''}>Reject</button>`:'—'}</td></tr>`;}
   h+='</tbody>';t.innerHTML=h;
   t.querySelectorAll('.remote-approve').forEach(b=>b.onclick=()=>approveRemoteRequest(b.dataset.id));t.querySelectorAll('.remote-reject').forEach(b=>b.onclick=()=>rejectRemoteRequest(b.dataset.id));
 }
@@ -1361,33 +1369,38 @@ function requestPreviewText(before,after){const diffs=assignmentDiff(before,afte
 async function approveRemoteRequest(id){
   if(remoteRequestBusy)return;const r=remoteRequests.find(x=>x.id===id);if(!r)return;const active=activeStaff().some(p=>p.id===r.staff_id);if(!active)return alert('This request belongs to a staff member who is no longer active in this month. Reject it or reactivate the staff member first.');
   remoteRequestBusy=id;renderRemoteRequests();
-  const beforeAssignments={...state.assignments},beforeFree=JSON.parse(JSON.stringify(state.freeRequests)),beforeSwaps=JSON.parse(JSON.stringify(state.swaps));
+  const beforeAssignments={...state.assignments},beforeFree=JSON.parse(JSON.stringify(state.freeRequests)),beforeSwaps=JSON.parse(JSON.stringify(state.swaps)),beforeLeaves=JSON.parse(JSON.stringify(state.leaves)),beforeRequests=JSON.parse(JSON.stringify(state.requests));
   try{
     let candidate=null,localObject=null;
     if(r.request_type==='flex_days'){
       const p=r.payload||{};localObject={id:uid('f'),person:r.staff_id,days:Math.max(1,Number(p.days)||1),from:p.from,to:p.to,consecutive:!!p.consecutive,hard:true,remoteRequestId:r.id};state.freeRequests.push(localObject);
       const solved=await generate(true,{silent:true,dryRun:true});if(!solved.ok)throw new Error(solved.error||'The roster cannot grant this request under the current hard rules.');candidate=solved.assignments;if(!freeRequestResult(localObject,candidate).met)throw new Error('The solver could not create the requested free-day pattern.');
+    }else if(isExtraRequest(r)){
+      const p=r.payload||{};
+      if(r.request_type==='leave'){if(!p.from||!p.to||p.to<p.from)throw new Error('This leave request has invalid dates.');localObject={id:uid('l'),person:r.staff_id,from:p.from,to:p.to,status:'approved',remoteRequestId:r.id};state.leaves.push(localObject);}
+      else{if(!String(p.date||'').startsWith(state.month))throw new Error(`This request is for ${p.date||'another date'}. Switch the roster to that month, then approve it.`);localObject={id:uid('q'),person:r.staff_id,date:p.date,type:p.type,shift:p.type==='off'?'':(p.shift||''),remoteRequestId:r.id};state.requests.push(localObject);}
+      const solved=await generate(true,{silent:true,dryRun:true});if(!solved.ok)throw new Error(solved.error||'The roster cannot be re-optimized with this request under the current hard rules.');candidate=solved.assignments;
     }else{
       const p=r.payload||{};localObject={id:uid('sw'),personA:r.staff_id,dateA:p.dateA,personB:p.personB,dateB:p.dateB,status:'pending',remoteRequestId:r.id};const val=validateSwap(localObject);if(!val.ok)throw new Error(val.message);candidate=val.temp;
     }
     const pv=requestPreviewText(beforeAssignments,candidate);const audit=auditAssignments(candidate);if(audit.open.length||audit.violations.length)throw new Error('The proposed change would create a mandatory coverage or hard-rule problem.');
-    const question=`Approve ${r.staff_name}'s ${r.request_type==='swap'?'swap':'flexible-day'} request?
+    const question=`Approve ${r.staff_name}'s ${remoteRequestLabel(r.request_type)} request?
 
 This will change ${pv.diffs.length} roster cell${pv.diffs.length===1?'':'s'}.
 
 ${pv.preview||'No assignment cells need to change.'}`;
-    if(!confirm(question)){state.assignments=beforeAssignments;state.freeRequests=beforeFree;state.swaps=beforeSwaps;renderAll();return;}
+    if(!confirm(question)){state.assignments=beforeAssignments;state.freeRequests=beforeFree;state.swaps=beforeSwaps;state.leaves=beforeLeaves;state.requests=beforeRequests;renderAll();return;}
     state.assignments={...candidate};state.published=false;if(r.request_type==='swap'){localObject.status='approved';localObject.approvedAt=new Date().toLocaleString();state.swaps.push(localObject);}
-    await supabaseRpc('icu_roster_set_request_status',{p_portal_id:state.remotePortal.portalId,p_admin_token:state.remotePortal.adminToken,p_request_id:r.id,p_status:'approved',p_admin_note:`Approved after preview; ${pv.diffs.length} roster cell change(s)`});
+    await setRemoteStatus(r,'approved',`Approved after preview; ${pv.diffs.length} roster cell change(s)`);
     logAction('Approved staff portal request',`${r.staff_name}: ${remoteRequestSummary(r)} · ${pv.diffs.length} roster cell change(s).`);renderAll();await syncStaffPortal(false,true);await refreshRemoteRequests();showAudit(auditSchedule(false));
-  }catch(e){state.assignments=beforeAssignments;state.freeRequests=beforeFree;state.swaps=beforeSwaps;renderAll();alert(`Could not approve this request automatically:
+  }catch(e){state.assignments=beforeAssignments;state.freeRequests=beforeFree;state.swaps=beforeSwaps;state.leaves=beforeLeaves;state.requests=beforeRequests;renderAll();alert(`Could not approve this request automatically:
 
 ${e.message}`);}
   finally{remoteRequestBusy='';renderRemoteRequests();setGenerationBusy(false);}
 }
 async function rejectRemoteRequest(id){
   if(remoteRequestBusy)return;const r=remoteRequests.find(x=>x.id===id);if(!r)return;if(!confirm(`Reject ${r.staff_name}'s request?`))return;remoteRequestBusy=id;renderRemoteRequests();
-  try{await supabaseRpc('icu_roster_set_request_status',{p_portal_id:state.remotePortal.portalId,p_admin_token:state.remotePortal.adminToken,p_request_id:r.id,p_status:'rejected',p_admin_note:''});logAction('Rejected staff portal request',`${r.staff_name}: ${remoteRequestSummary(r)}`);await refreshRemoteRequests();}
+  try{await setRemoteStatus(r,'rejected','');logAction('Rejected staff portal request',`${r.staff_name}: ${remoteRequestSummary(r)}`);await refreshRemoteRequests();}
   catch(e){alert(e.message);}finally{remoteRequestBusy='';renderRemoteRequests();}
 }
 
