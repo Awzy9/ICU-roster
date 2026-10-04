@@ -361,7 +361,7 @@ function solveRosterFast(body){
       return{ok:true,assignments,elapsedMs:Date.now()-started,engine:'fast-constraint',partition:lens,totalMandatoryCredits:totalCredits,plannedOpen,weekendDeficit};
     }
   }
-  if(timedOut())throw new Error('Fast scheduler reached its 8.5-second safety limit. The roster was not changed. This usually means the current staffing/leave/locked-block combination is highly constrained.');
+  if(timedOut())throw new Error('Fast scheduler reached its 8.5-second safety limit. The roster was not changed. This staffing/leave/locked-block combination is very tightly constrained (for example weekend caps fully used and staff at their credit caps). Use the server solver, add on-call-capable staff or raise caps, or relax locks and leave.');
   throw new Error('No roster was found under the current hard rules. The roster was not changed. Check staff eligibility, approved leave, locked assignments, credit caps, on-call caps, and weekend limits.');
 }
 
